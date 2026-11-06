@@ -1,15 +1,22 @@
 # 碁盤
 
-ブラウザで動く碁盤アプリです。PC・スマホの両方で使えます。ビルド不要の静的サイト（HTML / CSS / JavaScript）です。
+ブラウザで動く碁盤アプリです。PC・スマホの両方で使えます。TypeScript + Vite で書いています。
 
-## 使い方
+## 開発
 
-`index.html` をブラウザで開くだけで動きます（GitHub Pages などの静的ホスティングにそのまま置けます）。
-ローカルでサーバーを立てる場合は:
+Node.js 20.19 以降（または 22.12 以降）が必要です。
 
 ```sh
-npm start   # python3 -m http.server 8000 → http://localhost:8000/
+npm ci            # 依存パッケージのインストール
+npm run dev       # 開発サーバー（http://localhost:5173/）
+npm test          # テスト（Vitest）
+npm run typecheck # 型チェック
+npm run build     # dist/ に本番用ファイルを出力（型チェック込み）
+npm run preview   # ビルド結果をローカルで確認
 ```
+
+`dist/` は相対パスで出力されるので、GitHub Pages などの静的ホスティングのどのディレクトリにもそのまま置けます。
+（ES モジュールを使うため、`dist/index.html` をファイルとして直接開いても動きません。HTTP で配信してください。）
 
 ## 機能
 
@@ -36,16 +43,18 @@ npm start   # python3 -m http.server 8000 → http://localhost:8000/
 ## ファイル構成
 
 ```
-index.html            画面
-css/style.css         スタイル（スマホは縦並び、横長画面は右側に操作パネル）
-js/goban-core.js      盤面ロジック・取り判定・座標・表示範囲・レイアウト計算（DOM 非依存）
-js/renderer.js        Canvas への描画（画面表示と PNG 出力で共用）
-js/app.js             UI・ポインタ操作・履歴・保存
-tests/                goban-core.js のテスト
-```
-
-## テスト
-
-```sh
-npm test   # Node.js 18 以降（node --test）
+index.html          画面
+src/main.ts         エントリポイント
+src/app.ts          UI（ポインタ操作・パネル・履歴・保存をつなぐ GobanApp クラス）
+src/board.ts        盤面・石の配置と取り・呼吸点ゼロの連の判定
+src/coords.ts       座標ラベル・星の位置
+src/view.ts         表示範囲（拡大）
+src/layout.ts       キャンバス上のレイアウト計算と当たり判定
+src/renderer.ts     Canvas への描画（画面表示と PNG 出力で共用）
+src/export.ts       PNG 出力
+src/history.ts      元に戻す／やり直す
+src/persistence.ts  localStorage への保存と、読み込み時の検証
+src/state.ts        アプリの状態の型と初期値
+src/style.css       スタイル（スマホは縦並び、横長画面は右側に操作パネル）
+tests/              Vitest のテスト（DOM に依存しない部分）
 ```
