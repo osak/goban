@@ -1,0 +1,39 @@
+name: Build single-file app
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      # 型チェックのあと、JS / CSS を埋め込んだ dist-single/goban.html を作る
+      - run: npm run build:single
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: goban-single
+          path: dist-single/goban.html
+          if-no-files-found: error

@@ -12,11 +12,19 @@ npm run dev       # 開発サーバー（http://localhost:5173/）
 npm test          # テスト（Vitest）
 npm run typecheck # 型チェック
 npm run build     # dist/ に本番用ファイルを出力（型チェック込み）
+npm run build:single  # dist-single/goban.html に 1 ファイル版を出力（型チェック込み）
 npm run preview   # ビルド結果をローカルで確認
 ```
 
-`dist/` は相対パスで出力されるので、GitHub Pages などの静的ホスティングのどのディレクトリにもそのまま置けます。
-（ES モジュールを使うため、`dist/index.html` をファイルとして直接開いても動きません。HTTP で配信してください。）
+- `dist/` は相対パスで出力されるので、GitHub Pages などの静的ホスティングのどのディレクトリにもそのまま置けます。
+  ES モジュールを使うため、`dist/index.html` をファイルとして直接開いても動きません。HTTP で配信してください。
+- `dist-single/goban.html` は JS と CSS を埋め込んだ 1 ファイル版です。ダブルクリックで直接開いても動きます。
+
+## GitHub Actions
+
+`.github/workflows/build-single.yml` が push のたびにテストと 1 ファイル版のビルドを行い、
+`goban.html` を成果物 `goban-single` としてアップロードします（Actions の実行結果ページからダウンロードできます）。
+「Run workflow」から手動でも実行できます。
 
 ## 機能
 
@@ -56,5 +64,6 @@ src/history.ts      元に戻す／やり直す
 src/persistence.ts  localStorage への保存と、読み込み時の検証
 src/state.ts        アプリの状態の型と初期値
 src/style.css       スタイル（スマホは縦並び、横長画面は右側に操作パネル）
+plugins/single-file.ts  1 ファイル版を作る Vite プラグイン（JS / CSS を HTML に埋め込む）
 tests/              Vitest のテスト（DOM に依存しない部分）
 ```
