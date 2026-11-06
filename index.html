@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#dcb35c">
+  <meta name="description" content="ブラウザで使える碁盤。石を置く・取る・拡大・PNG 保存ができます。">
+  <title>碁盤</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23dcb35c'/%3E%3Cpath d='M8 4v24M16 4v24M24 4v24M4 8h24M4 16h24M4 24h24' stroke='%232a1f0e' stroke-width='1.5'/%3E%3Ccircle cx='16' cy='16' r='5.5' fill='%23111'/%3E%3Ccircle cx='24' cy='8' r='5.5' fill='%23fff' stroke='%23555'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app">
+    <main class="board-area" id="boardArea">
+      <canvas id="board" role="img" aria-label="碁盤"></canvas>
+      <div class="zoom-hint" id="zoomHint" hidden>範囲をドラッグして拡大（タップで周辺を拡大）</div>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      <noscript><p class="noscript">このアプリには JavaScript が必要です。</p></noscript>
+    </main>
+
+    <aside class="panel" aria-label="操作パネル">
+      <div class="row">
+        <span class="row-label">置く石</span>
+        <div class="seg" id="colorMode" role="group" aria-label="置く石">
+          <button type="button" data-value="black"><span class="stone-icon black"></span>黒</button>
+          <button type="button" data-value="white"><span class="stone-icon white"></span>白</button>
+          <button type="button" data-value="alternate"><span class="stone-icon half"></span>交互</button>
+        </div>
+        <button type="button" class="chip" id="nextColor" hidden title="次の手番を入れ替える">
+          次: <span class="stone-icon black" id="nextColorIcon"></span><span id="nextColorText">黒</span>
+        </button>
+      </div>
+
+      <div class="row">
+        <span class="row-label">囲まれた石</span>
+        <div class="seg" id="captureMode" role="group" aria-label="囲まれた石">
+          <button type="button" data-value="remove">取り除く</button>
+          <button type="button" data-value="mark">△マーク</button>
+          <button type="button" data-value="none">何もしない</button>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <button type="button" class="tool-btn" id="undo" title="元に戻す (Ctrl+Z)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+          <span>戻す</span>
+        </button>
+        <button type="button" class="tool-btn" id="redo" title="やり直す (Ctrl+Y)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+          <span>進む</span>
+        </button>
+        <button type="button" class="tool-btn" id="zoomBtn" aria-pressed="false" title="ドラッグした範囲を拡大">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
+          <span>拡大</span>
+        </button>
+        <button type="button" class="tool-btn" id="resetZoom" title="盤全体を表示">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/></svg>
+          <span>全体</span>
+        </button>
+        <button type="button" class="tool-btn" id="exportPng" title="表示中の盤面を PNG で保存">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v3h16v-3"/></svg>
+          <span>PNG</span>
+        </button>
+        <button type="button" class="tool-btn" id="settingsBtn" aria-expanded="false" aria-controls="settings" title="設定">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+          <span>設定</span>
+        </button>
+      </div>
+
+      <div class="settings" id="settings" hidden>
+        <div class="row">
+          <span class="row-label">盤サイズ</span>
+          <div class="seg" id="boardSize" role="group" aria-label="盤サイズ">
+            <button type="button" data-value="19">19路</button>
+            <button type="button" data-value="13">13路</button>
+            <button type="button" data-value="9">9路</button>
+          </div>
+        </div>
+        <div class="row">
+          <span class="row-label">座標</span>
+          <div class="seg" id="coordStyle" role="group" aria-label="座標の表記">
+            <button type="button" data-value="western">A–T / 1–19</button>
+            <button type="button" data-value="japanese">1–19 / 一–十九</button>
+          </div>
+        </div>
+        <div class="row">
+          <span class="row-label">見た目</span>
+          <div class="seg" id="theme" role="group" aria-label="盤の見た目">
+            <button type="button" data-value="wood">木目</button>
+            <button type="button" data-value="print">白黒</button>
+          </div>
+        </div>
+        <div class="row">
+          <span class="row-label"></span>
+          <button type="button" class="btn danger" id="clearBoard">盤面をクリア</button>
+        </div>
+        <p class="help">
+          石のない交点をタップで石を置き、石をタップで取り除きます。黒・白の連打中はドラッグで続けて置けます（石の上から始めると続けて消せます）。
+          PNG は表示中の範囲を座標付きで保存します。
+        </p>
+      </div>
+    </aside>
+  </div>
+
+  <script src="js/goban-core.js"></script>
+  <script src="js/renderer.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
