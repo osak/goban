@@ -42,15 +42,17 @@ interface Snapshot {
   readonly grid: Uint8Array;
   readonly nextColor: StoneColor;
   readonly moves: readonly Move[];
+  readonly marks: ReadonlySet<number>;
 }
 
 /** 石を置く／消す操作（タップまたはドラッグ）の途中経過 */
 interface Stroke {
   readonly pointerId: number;
   readonly before: Snapshot;
-  readonly action: 'place' | 'erase';
+  /** 石を置く / 石を消す / △を付ける / △を外す */
+  readonly action: 'place' | 'erase' | 'mark' | 'unmark';
   readonly color: StoneColor;
-  /** ドラッグで続けて置ける／消せるか（同色連打のときだけ） */
+  /** ドラッグで続けて置ける／消せるか（同色連打と△の付け外しのとき） */
   readonly drag: boolean;
   /** 直前のポインタ位置（キャンバス上の px） */
   last: { x: number; y: number };
@@ -107,6 +109,8 @@ export class GobanApp {
   /** マウスが指している交点（タッチでは使わない） */
   private hover: Point | null = null;
   private stroke: Stroke | null = null;
+  /** 拡大範囲を選び終えたら戻すタップの役割 */
+  private toolBeforeZoom: Tool = 'stone';
   private selection: Selection | null = null;
   private renderQueued = false;
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -177,7 +181,7 @@ export class GobanApp {
     this.ui.zoomHint.classList.toggle('selecting', this.selection !== null);
     const L = this.layout;
     if (!L) return;
-    const { board, view, theme, coordStyle, captureMode, tool } = this.state;
+    const { board, view, theme, coordStyle, tool } = this.state;
     const hover = this.hover;
     const ghost =
       hover && !this.stroke && tool === 'stone' && board.get(hover.x, hover.y) === EMPTY
@@ -190,12 +194,20 @@ export class GobanApp {
       layout: L,
       theme,
       coordStyle,
-      marks: captureMode === 'mark' ? board.deadStones() : null,
+      marks: this.marks(),
       numbers: this.numbers(),
       ghost,
       selection: this.selection,
       scale: this.scale,
     });
+  }
+
+  /** △を付ける石: 手で付けたもの（石があるところだけ）と、「△マーク」モードの囲まれた石 */
+  private marks(): Set<number> {
+    const { board, captureMode } = this.state;
+    const out = captureMode === 'mark' ? board.deadStones() : new Set<number>();
+    for (const i of this.state.marks) if (board.grid[i] !== EMPTY) out.add(i);
+    return out;
   }
 
   /** 石に書く着手番号（表示しないときは null） */
@@ -227,8 +239,8 @@ export class GobanApp {
   // ---------------------------------------------------------------------------
 
   private snapshot(): Snapshot {
-    const { board, nextColor, moves } = this.state;
-    return { size: board.size, grid: board.grid.slice(), nextColor, moves: moves.slice() };
+    const { board, nextColor, moves, marks } = this.state;
+    return { size: board.size, grid: board.grid.slice(), nextColor, moves: moves.slice(), marks: new Set(marks) };
   }
 
   private applySnapshot(snap: Snapshot): void {
@@ -243,6 +255,7 @@ export class GobanApp {
     }
     this.state.nextColor = snap.nextColor;
     this.state.moves = snap.moves.slice();
+    this.state.marks = new Set(snap.marks);
     this.changed();
   }
 
@@ -495,18 +508,31 @@ export class GobanApp {
     this.capturePointer(e);
 
     const board = state.board;
+    const i = board.index(p.x, p.y);
+    const marking = state.tool === 'mark';
+    if (marking && board.grid[i] === EMPTY) return; // △は石にだけ付ける
     const stroke: Stroke = {
       pointerId: e.pointerId,
       before: this.snapshot(),
-      action: board.get(p.x, p.y) === EMPTY ? 'place' : 'erase',
+      action: marking
+        ? state.marks.has(i)
+          ? 'unmark'
+          : 'mark'
+        : board.grid[i] === EMPTY
+          ? 'place'
+          : 'erase',
       color: currentColor(state),
-      drag: state.colorMode !== 'alternate',
+      drag: marking || state.colorMode !== 'alternate',
       last: pt,
-      visited: new Set([board.index(p.x, p.y)]),
+      visited: new Set([i]),
     };
     this.stroke = stroke;
 
-    if (stroke.action === 'place') {
+    if (stroke.action === 'mark') {
+      state.marks.add(i);
+    } else if (stroke.action === 'unmark') {
+      state.marks.delete(i);
+    } else if (stroke.action === 'place') {
       const res = board.place(p.x, p.y, stroke.color, state.captureMode);
       if (res.ok) {
         state.moves.push({ x: p.x, y: p.y, color: stroke.color });
@@ -551,7 +577,12 @@ export class GobanApp {
           const i = board.index(p.x, p.y);
           if (stroke.visited.has(i)) continue;
           stroke.visited.add(i);
-          if (stroke.action === 'place') {
+          if (stroke.action === 'mark' || stroke.action === 'unmark') {
+            if (board.grid[i] === EMPTY) continue;
+            if (stroke.action === 'mark') state.marks.add(i);
+            else state.marks.delete(i);
+            changed = true;
+          } else if (stroke.action === 'place') {
             if (board.grid[i] === EMPTY && board.place(p.x, p.y, stroke.color, state.captureMode).ok) {
               state.moves.push({ x: p.x, y: p.y, color: stroke.color });
               changed = true;
@@ -582,7 +613,7 @@ export class GobanApp {
       this.selection = null;
       const size = this.state.board.size;
       const view = samePoint(sel.a, sel.b) ? viewAround(sel.a, TAP_ZOOM_SPAN, size) : viewFromPoints(sel.a, sel.b, size);
-      this.setTool('stone');
+      this.setTool(this.toolBeforeZoom);
       this.setView(view);
       return;
     }
@@ -615,7 +646,10 @@ export class GobanApp {
     const stroke = this.stroke;
     if (!stroke) return;
     this.stroke = null;
-    if (sameGrid(stroke.before.grid, this.state.board.grid) && stroke.before.moves.length === this.state.moves.length) {
+    this.pruneMarks();
+    const { board, moves, marks } = this.state;
+    const sameMarks = marks.size === stroke.before.marks.size && [...marks].every((i) => stroke.before.marks.has(i));
+    if (sameGrid(stroke.before.grid, board.grid) && stroke.before.moves.length === moves.length && sameMarks) {
       this.state.nextColor = stroke.before.nextColor;
     } else {
       this.history.record(stroke.before);
@@ -628,7 +662,14 @@ export class GobanApp {
   // 操作
   // ---------------------------------------------------------------------------
 
+  /** 石がなくなった交点の△を外す（取られた石の跡に後から置いた石に△が残らないように） */
+  private pruneMarks(): void {
+    const { board, marks } = this.state;
+    for (const i of marks) if (board.grid[i] === EMPTY) marks.delete(i);
+  }
+
   private setTool(tool: Tool): void {
+    if (tool === 'zoom' && this.state.tool !== 'zoom') this.toolBeforeZoom = this.state.tool;
     this.state.tool = tool;
     this.selection = null;
     this.hover = null;
@@ -677,16 +718,17 @@ export class GobanApp {
   private resetMoves(): void {
     this.state.moves = [];
     this.state.numberFrom = 0;
+    this.state.marks = new Set();
   }
 
   private async exportPng(): Promise<void> {
-    const { board, view, theme, coordStyle, captureMode } = this.state;
+    const { board, view, theme, coordStyle } = this.state;
     const blob = await renderPng({
       board,
       view,
       theme,
       coordStyle,
-      marks: captureMode === 'mark' ? board.deadStones() : null,
+      marks: this.marks(),
       numbers: this.numbers(),
     });
     if (!blob) {
@@ -728,10 +770,21 @@ export class GobanApp {
       this.requestRender();
     };
 
-    this.bindSegment('colorMode', COLOR_MODES, () => state.colorMode, (v) => {
-      state.colorMode = v;
-      settingChanged();
-    });
+    // 「置く石」は黒・白・交互に加えて△（石に△を付け外しする）を選べる
+    this.bindSegment(
+      'colorMode',
+      [...COLOR_MODES, 'mark'] as const,
+      () => (state.tool === 'mark' ? 'mark' : state.colorMode),
+      (v) => {
+        if (v === 'mark') {
+          this.setTool('mark');
+        } else {
+          state.colorMode = v;
+          this.setTool('stone');
+        }
+        settingChanged();
+      },
+    );
     this.bindSegment('captureMode', CAPTURE_MODES, () => state.captureMode, (v) => {
       state.captureMode = v;
       settingChanged();
@@ -768,7 +821,7 @@ export class GobanApp {
     });
     ui.undo.addEventListener('click', () => this.undo());
     ui.redo.addEventListener('click', () => this.redo());
-    ui.zoom.addEventListener('click', () => this.setTool(state.tool === 'zoom' ? 'stone' : 'zoom'));
+    ui.zoom.addEventListener('click', () => this.setTool(state.tool === 'zoom' ? this.toolBeforeZoom : 'zoom'));
     ui.resetZoom.addEventListener('click', () => this.setView(fullView(state.board.size)));
     ui.exportPng.addEventListener('click', () => void this.exportPng());
     ui.clear.addEventListener('click', () => this.clearBoard());
@@ -811,7 +864,7 @@ export class GobanApp {
         e.preventDefault();
         this.redo();
       } else if (e.key === 'Escape' && this.state.tool === 'zoom') {
-        this.setTool('stone');
+        this.setTool(this.toolBeforeZoom);
       }
     });
   }
@@ -820,7 +873,7 @@ export class GobanApp {
     const { state, ui } = this;
     for (const update of this.segmentUpdaters) update();
     const black = state.nextColor === BLACK;
-    ui.nextColor.hidden = state.colorMode !== 'alternate';
+    ui.nextColor.hidden = state.colorMode !== 'alternate' || state.tool === 'mark';
     ui.nextColorIcon.className = `stone-icon ${black ? 'black' : 'white'}`;
     ui.nextColorText.textContent = black ? '黒' : '白';
     ui.undo.disabled = !this.history.canUndo;

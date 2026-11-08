@@ -227,6 +227,14 @@ button {
   background: radial-gradient(circle at 35% 30%, #fff, #d6d3cc 80%);
 }
 
+.mark-icon {
+  display: inline-block;
+  width: 13px;
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+}
+
 .stone-icon.half {
   background: linear-gradient(90deg, #111 50%, #fff 50%);
 }

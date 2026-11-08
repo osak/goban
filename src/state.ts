@@ -14,8 +14,8 @@ export const COLOR_MODES: readonly ColorMode[] = ['black', 'white', 'alternate']
 
 export const BOARD_SIZES: readonly number[] = [19, 13, 9];
 
-/** 盤面タップの役割: 石を置く / 拡大範囲を選ぶ */
-export type Tool = 'stone' | 'zoom';
+/** 盤面タップの役割: 石を置く / 石に△を付け外しする / 拡大範囲を選ぶ */
+export type Tool = 'stone' | 'mark' | 'zoom';
 
 export interface AppState {
   board: Board;
@@ -34,6 +34,8 @@ export interface AppState {
   /** 番号を付け始める手（moves のインデックス）。moves.length 以上なら次に置く手から */
   numberFrom: number;
   numberStyle: NumberStyle;
+  /** 手で△を付けた石（交点のインデックス）。囲まれた石の△とは別 */
+  marks: Set<number>;
 }
 
 export function initialState(size = 19): AppState {
@@ -50,6 +52,7 @@ export function initialState(size = 19): AppState {
     numbering: false,
     numberFrom: 0,
     numberStyle: 'relative',
+    marks: new Set(),
   };
 }
 

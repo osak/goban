@@ -19,11 +19,12 @@
 
     <aside class="panel" aria-label="操作パネル">
       <div class="row">
-        <span class="row-label">置く石</span>
-        <div class="seg" id="colorMode" role="group" aria-label="置く石">
+        <span class="row-label">置くもの</span>
+        <div class="seg" id="colorMode" role="group" aria-label="置くもの">
           <button type="button" data-value="black"><span class="stone-icon black"></span>黒</button>
           <button type="button" data-value="white"><span class="stone-icon white"></span>白</button>
           <button type="button" data-value="alternate"><span class="stone-icon half"></span>交互</button>
+          <button type="button" data-value="mark" title="石をタップして△を付ける・外す"><span class="mark-icon" aria-hidden="true">△</span>印</button>
         </div>
         <button type="button" class="chip" id="nextColor" hidden title="次の手番を入れ替える">
           次: <span class="stone-icon black" id="nextColorIcon"></span><span id="nextColorText">黒</span>
@@ -132,7 +133,7 @@
           <button type="button" class="btn danger" id="clearBoard">盤面をクリア</button>
         </div>
         <p class="help">
-          石のない交点をタップで石を置き、石をタップで取り除きます。黒・白の連打中はドラッグで続けて置けます（石の上から始めると続けて消せます）。
+          石のない交点をタップで石を置き、石をタップで取り除きます。「印」を選ぶと、石をタップして△を付けたり外したりできます（ドラッグで続けて付け外しできます）。黒・白の連打中はドラッグで続けて置けます（石の上から始めると続けて消せます）。
           PNG は表示中の範囲を座標付きで保存します。
           「着手番号」を表示にすると、石を置いた順の番号を石に表示します（ログの手をタップするとその手から番号を付けます）。
         </p>

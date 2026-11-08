@@ -72,6 +72,27 @@ export function serializeMoves(moves: readonly Move[]): string {
   return moves.map((m) => (m.color === BLACK ? 'B' : 'W') + COORD_CHARS[m.x] + COORD_CHARS[m.y]).join('');
 }
 
+/** 交点のインデックス（y * size + x）の集合を、1 点 2 文字（列 + 行）で並べた文字列にする */
+export function serializePoints(points: Iterable<number>, size: number): string {
+  return [...points]
+    .sort((a, b) => a - b)
+    .map((i) => COORD_CHARS[i % size] + COORD_CHARS[Math.floor(i / size)])
+    .join('');
+}
+
+/** serializePoints の逆。size 路盤に収まらないなど不正なら null */
+export function deserializePoints(size: number, data: unknown): Set<number> | null {
+  if (typeof data !== 'string' || data.length % 2 !== 0) return null;
+  const out = new Set<number>();
+  for (let k = 0; k < data.length; k += 2) {
+    const x = COORD_CHARS.indexOf(data[k]);
+    const y = COORD_CHARS.indexOf(data[k + 1]);
+    if (x < 0 || y < 0 || x >= size || y >= size) return null;
+    out.add(y * size + x);
+  }
+  return out;
+}
+
 /** serializeMoves の逆。size 路盤に収まらないなど不正なら null */
 export function deserializeMoves(size: number, data: unknown): Move[] | null {
   if (typeof data !== 'string' || data.length % 3 !== 0) return null;
