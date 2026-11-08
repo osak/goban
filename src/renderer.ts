@@ -198,6 +198,47 @@ export function draw(ctx: CanvasRenderingContext2D, p: DrawParams): void {
   ctx.restore();
 }
 
+/** 盤面一覧用の小さな盤面（線と石だけ）。px × px の正方形に描く */
+export function drawThumbnail(ctx: CanvasRenderingContext2D, board: Board, px: number, themeName: ThemeName): void {
+  const theme = THEMES[themeName];
+  const size = board.size;
+  const pad = px / (size + 1);
+  const cell = (px - 2 * pad) / (size - 1);
+  ctx.save();
+  ctx.fillStyle = theme.background;
+  ctx.fillRect(0, 0, px, px);
+  ctx.strokeStyle = theme.line;
+  ctx.globalAlpha = 0.45;
+  ctx.lineWidth = Math.max(0.5, px / 200);
+  ctx.beginPath();
+  for (let k = 0; k < size; k++) {
+    const v = pad + k * cell;
+    ctx.moveTo(pad, v);
+    ctx.lineTo(px - pad, v);
+    ctx.moveTo(v, pad);
+    ctx.lineTo(v, px - pad);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  const r = cell * 0.5;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const c = board.get(x, y);
+      if (c === EMPTY) continue;
+      ctx.beginPath();
+      ctx.arc(pad + x * cell, pad + y * cell, r, 0, Math.PI * 2);
+      ctx.fillStyle = c === BLACK ? '#111111' : '#ffffff';
+      ctx.fill();
+      if (c !== BLACK) {
+        ctx.lineWidth = Math.max(0.4, r * 0.15);
+        ctx.strokeStyle = '#555555';
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
+}
+
 function drawStone(
   ctx: CanvasRenderingContext2D,
   x: number,

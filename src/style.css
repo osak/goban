@@ -148,6 +148,13 @@ button {
   .panel .chip {
     align-self: flex-start;
   }
+  .panel .text-input {
+    flex: 0 0 auto;
+  }
+  .board-list {
+    max-height: 40vh;
+    max-height: 40dvh;
+  }
   .movelog-list {
     max-height: 40vh;
     max-height: 40dvh;
@@ -266,7 +273,7 @@ button {
 
 .toolbar {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -318,6 +325,97 @@ button {
 .btn.danger {
   color: var(--danger);
   border-color: currentColor;
+}
+
+.boards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.text-input {
+  flex: 1 1 10em;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* iOS で入力時に拡大されないように */
+}
+
+.boards-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.board-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: min(16em, 32vh);
+  overflow-y: auto;
+  background: var(--seg-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.board-list button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 8px 5px 5px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-list button:hover {
+  background: var(--hover);
+}
+
+.board-list button[aria-current="true"] {
+  background: var(--panel);
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.board-thumb {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.board-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.board-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.board-meta {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .settings {
