@@ -80,10 +80,28 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v3h16v-3"/></svg>
           <span>PNG</span>
         </button>
+        <button type="button" class="tool-btn" id="boardsBtn" aria-expanded="false" aria-controls="boards" title="保存した盤面">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="m3 12.5 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>
+          <span>盤面</span>
+        </button>
         <button type="button" class="tool-btn" id="settingsBtn" aria-expanded="false" aria-controls="settings" title="設定">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
           <span>設定</span>
         </button>
+      </div>
+
+      <div class="boards" id="boards" hidden>
+        <div class="row">
+          <span class="row-label">盤面の名前</span>
+          <input type="text" class="text-input" id="boardName" maxlength="40" autocomplete="off" aria-label="盤面の名前">
+        </div>
+        <div class="boards-actions">
+          <button type="button" class="btn" id="newBoard" title="空の盤面を作る">新規</button>
+          <button type="button" class="btn" id="duplicateBoard" title="今の盤面をコピーする">複製</button>
+          <button type="button" class="btn danger" id="deleteBoard" title="今の盤面を削除する">削除</button>
+        </div>
+        <ul class="board-list" id="boardList" aria-label="保存した盤面"></ul>
+        <p class="help">盤面は編集するたびに自動で保存されます（このブラウザの中に保存）。一覧をタップすると切り替えます。</p>
       </div>
 
       <div class="settings" id="settings" hidden>

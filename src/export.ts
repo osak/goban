@@ -26,11 +26,13 @@ export function renderPng(params: ExportParams): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
 }
 
-export function exportFileName(date = new Date()): string {
+/** 保存するファイル名。name（盤面の名前）があれば含める。ファイル名に使えない文字は _ にする */
+export function exportFileName(date = new Date(), name = ''): string {
   const p = (n: number) => String(n).padStart(2, '0');
   const day = `${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}`;
   const time = `${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}`;
-  return `goban-${day}-${time}.png`;
+  const safe = name.trim().replace(/[\\/:*?"<>|\u0000-\u001f\s.]+/g, '_').replace(/^_+|_+$/g, '');
+  return safe ? `goban-${safe}-${day}-${time}.png` : `goban-${day}-${time}.png`;
 }
 
 export function downloadBlob(blob: Blob, fileName: string): void {

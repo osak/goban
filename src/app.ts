@@ -6,10 +6,22 @@ import { BLACK, Board, CAPTURE_MODES, EMPTY, opposite, type StoneColor } from '.
 import { COORD_STYLES, pointName } from './coords';
 import { downloadBlob, exportFileName, renderPng } from './export';
 import { UndoHistory } from './history';
+import {
+  applyEntry,
+  cleanName,
+  defaultName,
+  emptyEntry,
+  entryFromState,
+  loadLibrary,
+  newId,
+  saveLibrary,
+  sortedEntries,
+  type BoardEntry,
+} from './library';
 import { computeLayout, hitTest, hitTestClamped, hitsAlongSegment, type Layout } from './layout';
 import { NUMBER_STYLES, movesOnBoard, stoneNumbers, withoutLastMoveAt, type Move } from './moves';
 import { getStorage, loadState, saveState } from './persistence';
-import { THEME_NAMES, draw } from './renderer';
+import { THEME_NAMES, draw, drawThumbnail } from './renderer';
 import { BOARD_SIZES, COLOR_MODES, currentColor, initialState, type AppState, type Tool } from './state';
 import { fullView, isFullView, normalizeView, viewAround, viewFromPoints, type Point, type View } from './view';
 
@@ -59,6 +71,16 @@ function byId<T extends HTMLElement>(id: string, type: new () => T): T {
   return el;
 }
 
+/** 一覧に出す更新時刻（今年なら月日と時刻、それより前なら年月日） */
+function formatTime(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  const md = `${d.getMonth() + 1}/${d.getDate()}`;
+  return d.getFullYear() === new Date().getFullYear()
+    ? `${md} ${p(d.getHours())}:${p(d.getMinutes())}`
+    : `${d.getFullYear()}/${md}`;
+}
+
 function samePoint(a: Point | null, b: Point | null): boolean {
   return a === null || b === null ? a === b : a.x === b.x && a.y === b.y;
 }
@@ -69,8 +91,16 @@ function sameGrid(a: Uint8Array, b: Uint8Array): boolean {
 
 export class GobanApp {
   private state: AppState = initialState();
-  private readonly history = new UndoHistory<Snapshot>(HISTORY_LIMIT);
   private readonly storage = getStorage();
+  /** 保存した盤面の一覧。currentId の盤面が今 state に読み込まれている */
+  private entries: BoardEntry[] = [];
+  private currentId = '';
+  /** 盤面ごとの元に戻す／やり直すの履歴（このページを開いている間だけ） */
+  private readonly histories = new Map<string, UndoHistory<Snapshot>>();
+  /** 盤面一覧のサムネイル（盤面の内容が変わったら作り直す） */
+  private readonly thumbnails = new Map<string, { key: string; canvas: HTMLCanvasElement }>();
+  /** 保存に失敗したことを知らせたか */
+  private saveFailureShown = false;
 
   private layout: ScreenLayout | null = null;
   private scale = 1;
@@ -100,6 +130,13 @@ export class GobanApp {
     moveLog: byId('moveLog', HTMLElement),
     moveLogStatus: byId('moveLogStatus', HTMLElement),
     moveLogList: byId('moveLogList', HTMLOListElement),
+    boardsToggle: byId('boardsBtn', HTMLButtonElement),
+    boards: byId('boards', HTMLElement),
+    boardName: byId('boardName', HTMLInputElement),
+    newBoard: byId('newBoard', HTMLButtonElement),
+    duplicateBoard: byId('duplicateBoard', HTMLButtonElement),
+    deleteBoard: byId('deleteBoard', HTMLButtonElement),
+    boardList: byId('boardList', HTMLUListElement),
     toast: byId('toast', HTMLElement),
   };
   /** 選択ボタン群の表示を状態に合わせる関数 */
@@ -115,6 +152,7 @@ export class GobanApp {
 
   start(): void {
     loadState(this.storage, this.state);
+    this.loadEntries();
     this.bindPointer();
     this.bindPanel();
     this.bindKeyboard();
@@ -223,7 +261,178 @@ export class GobanApp {
   /** 状態が変わったあとに保存とパネル表示の更新を行う */
   private changed(): void {
     saveState(this.storage, this.state);
+    this.syncCurrentEntry();
+    this.saveEntries();
     this.updateUI();
+  }
+
+  /** 今の盤面の履歴 */
+  private get history(): UndoHistory<Snapshot> {
+    let h = this.histories.get(this.currentId);
+    if (!h) {
+      h = new UndoHistory<Snapshot>(HISTORY_LIMIT);
+      this.histories.set(this.currentId, h);
+    }
+    return h;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 保存した盤面
+  // ---------------------------------------------------------------------------
+
+  private get currentEntry(): BoardEntry | undefined {
+    return this.entries.find((e) => e.id === this.currentId);
+  }
+
+  /** 保存した盤面の一覧を読み込み、選んでいた盤面を state に反映する */
+  private loadEntries(): void {
+    const library = loadLibrary(this.storage);
+    if (library) {
+      this.entries = [...library.entries];
+      this.currentId = library.currentId;
+      const entry = this.currentEntry;
+      if (entry) applyEntry(this.state, entry);
+    } else {
+      // 盤面の一覧がまだない（初回、または以前の版で保存した盤面）: 今の盤面を 1 つ目として登録する
+      const now = Date.now();
+      const entry = entryFromState(this.state, { id: newId(), name: defaultName([]), createdAt: now }, now);
+      this.entries = [entry];
+      this.currentId = entry.id;
+      this.saveEntries();
+    }
+  }
+
+  /** state の盤面の内容を一覧の今の盤面に書き戻す */
+  private syncCurrentEntry(): void {
+    const i = this.entries.findIndex((e) => e.id === this.currentId);
+    if (i >= 0) this.entries[i] = entryFromState(this.state, this.entries[i]);
+  }
+
+  private saveEntries(): void {
+    const ok = saveLibrary(this.storage, { currentId: this.currentId, entries: this.entries });
+    if (!ok && this.storage && !this.saveFailureShown) {
+      this.saveFailureShown = true;
+      this.toast('盤面を保存できませんでした（ブラウザの保存容量を確認してください）');
+    }
+  }
+
+  /** 一覧の盤面 id に切り替える */
+  private switchBoard(id: string): void {
+    if (this.stroke || id === this.currentId) return;
+    const entry = this.entries.find((e) => e.id === id);
+    if (!entry) return;
+    this.syncCurrentEntry();
+    this.currentId = id;
+    applyEntry(this.state, entry);
+    this.hover = null;
+    this.selection = null;
+    this.relayout();
+    this.changed();
+  }
+
+  /** 盤面を一覧に加えて切り替える */
+  private addBoard(entry: BoardEntry): void {
+    this.syncCurrentEntry();
+    this.entries.push(entry);
+    this.switchBoard(entry.id);
+    this.ui.boardList.scrollTop = 0;
+  }
+
+  private newBoard(): void {
+    if (this.stroke) return;
+    this.addBoard(emptyEntry(defaultName(this.entries), this.state.board.size));
+  }
+
+  private duplicateBoard(): void {
+    if (this.stroke) return;
+    this.syncCurrentEntry();
+    const src = this.currentEntry;
+    if (!src) return;
+    const now = Date.now();
+    const name = cleanName(`${src.name} のコピー`, defaultName(this.entries));
+    this.addBoard({ ...src, id: newId(), name, createdAt: now, updatedAt: now });
+  }
+
+  private deleteBoard(): void {
+    const entry = this.currentEntry;
+    if (this.stroke || !entry) return;
+    if (!window.confirm(`「${entry.name}」を削除しますか？\n（削除すると元に戻せません）`)) return;
+    this.entries = this.entries.filter((e) => e.id !== entry.id);
+    this.histories.delete(entry.id);
+    this.thumbnails.delete(entry.id);
+    const next = sortedEntries(this.entries)[0] ?? emptyEntry(defaultName([]), entry.size);
+    if (this.entries.length === 0) this.entries.push(next);
+    this.currentId = ''; // 削除した盤面には書き戻さない
+    this.switchBoard(next.id);
+  }
+
+  private renameBoard(name: string, final: boolean): void {
+    const i = this.entries.findIndex((e) => e.id === this.currentId);
+    if (i < 0) return;
+    const fallback = this.entries[i].name;
+    const cleaned = final ? cleanName(name, fallback) : Array.from(name).slice(0, 40).join('') || fallback;
+    if (cleaned === this.entries[i].name) return;
+    this.entries[i] = { ...this.entries[i], name: cleaned };
+    this.saveEntries();
+    this.updateBoardList();
+    this.updateTitle();
+  }
+
+  private updateTitle(): void {
+    const name = this.currentEntry?.name;
+    document.title = name ? `${name} - 碁盤` : '碁盤';
+  }
+
+  /** 盤面一覧を描き直す */
+  private updateBoardList(): void {
+    const { boardList: list, boardName } = this.ui;
+    const current = this.currentEntry;
+    if (current && document.activeElement !== boardName) boardName.value = current.name;
+    this.ui.deleteBoard.disabled = !current;
+    if (this.ui.boards.hidden) return;
+
+    const items = sortedEntries(this.entries).map((e) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.id = e.id;
+      if (e.id === this.currentId) btn.setAttribute('aria-current', 'true');
+      const info = document.createElement('span');
+      info.className = 'board-info';
+      const name = document.createElement('span');
+      name.className = 'board-name';
+      name.textContent = e.name;
+      const meta = document.createElement('span');
+      meta.className = 'board-meta';
+      const moves = e.moves.length / 3;
+      const stones = e.stones.replace(/0/g, '').length;
+      meta.textContent = [`${e.size}路`, moves > 0 ? `${moves}手` : `${stones}子`, formatTime(e.updatedAt)].join(' ・ ');
+      info.append(name, meta);
+      btn.append(this.thumbnail(e), info);
+      const li = document.createElement('li');
+      li.append(btn);
+      return li;
+    });
+    list.replaceChildren(...items);
+  }
+
+  private thumbnail(e: BoardEntry): HTMLCanvasElement {
+    const key = `${this.state.theme}:${e.size}:${e.stones}`;
+    const cached = this.thumbnails.get(e.id);
+    if (cached && cached.key === key) return cached.canvas;
+    const canvas = cached?.canvas ?? document.createElement('canvas');
+    canvas.className = 'board-thumb';
+    const css = 48;
+    const scale = window.devicePixelRatio || 1;
+    canvas.width = Math.round(css * scale);
+    canvas.height = Math.round(css * scale);
+    const ctx = canvas.getContext('2d');
+    const board = Board.deserialize(e.size, e.stones);
+    if (ctx && board) {
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      drawThumbnail(ctx, board, css, this.state.theme);
+    }
+    this.thumbnails.set(e.id, { key, canvas });
+    return canvas;
   }
 
   // ---------------------------------------------------------------------------
@@ -484,7 +693,7 @@ export class GobanApp {
       this.toast('PNG の作成に失敗しました');
       return;
     }
-    downloadBlob(blob, exportFileName());
+    downloadBlob(blob, exportFileName(new Date(), this.currentEntry?.name));
     this.toast('PNG を保存しました');
   }
 
@@ -563,6 +772,26 @@ export class GobanApp {
     ui.resetZoom.addEventListener('click', () => this.setView(fullView(state.board.size)));
     ui.exportPng.addEventListener('click', () => void this.exportPng());
     ui.clear.addEventListener('click', () => this.clearBoard());
+    ui.boardsToggle.addEventListener('click', () => {
+      ui.boards.hidden = !ui.boards.hidden;
+      ui.boardsToggle.setAttribute('aria-expanded', String(!ui.boards.hidden));
+      this.updateBoardList();
+    });
+    ui.newBoard.addEventListener('click', () => this.newBoard());
+    ui.duplicateBoard.addEventListener('click', () => this.duplicateBoard());
+    ui.deleteBoard.addEventListener('click', () => this.deleteBoard());
+    ui.boardName.addEventListener('input', () => this.renameBoard(ui.boardName.value, false));
+    ui.boardName.addEventListener('change', () => {
+      this.renameBoard(ui.boardName.value, true);
+      ui.boardName.value = this.currentEntry?.name ?? '';
+    });
+    ui.boardName.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') ui.boardName.blur();
+    });
+    ui.boardList.addEventListener('click', (e) => {
+      const btn = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('button[data-id]') : null;
+      if (btn?.dataset.id) this.switchBoard(btn.dataset.id);
+    });
     ui.settingsToggle.addEventListener('click', () => {
       ui.settings.hidden = !ui.settings.hidden;
       ui.settingsToggle.setAttribute('aria-expanded', String(!ui.settings.hidden));
@@ -571,6 +800,7 @@ export class GobanApp {
 
   private bindKeyboard(): void {
     document.addEventListener('keydown', (e) => {
+      if (e.target instanceof HTMLInputElement) return; // 名前の入力中は文字の取り消しに使う
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       if (mod && !e.altKey && key === 'z') {
@@ -600,6 +830,8 @@ export class GobanApp {
     ui.zoomHint.hidden = state.tool !== 'zoom';
     ui.moveLog.hidden = !state.numbering;
     if (state.numbering) this.updateMoveLog();
+    this.updateBoardList();
+    this.updateTitle();
   }
 
   /** 着手のログを描き直す */
