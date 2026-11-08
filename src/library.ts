@@ -7,7 +7,7 @@
  */
 
 import { BLACK, Board, WHITE, type StoneColor } from './board';
-import { deserializeMoves, serializeMoves } from './moves';
+import { deserializeMoves, deserializePoints, serializeMoves, serializePoints } from './moves';
 import type { KeyValueStorage } from './persistence';
 import { BOARD_SIZES, type AppState } from './state';
 import { fullView, isView, normalizeView, type View } from './view';
@@ -26,6 +26,8 @@ export interface BoardEntry {
   readonly stones: string;
   /** serializeMoves() の文字列 */
   readonly moves: string;
+  /** 手で△を付けた石。serializePoints() の文字列 */
+  readonly marks: string;
   readonly numberFrom: number;
   readonly nextColor: StoneColor;
   readonly view: View;
@@ -62,14 +64,15 @@ export function cleanName(name: string, fallback: string): string {
  * 石や着手の記録が base から変わっていなければ更新時刻も引き継ぐ。
  */
 export function entryFromState(
-  state: Pick<AppState, 'board' | 'moves' | 'numberFrom' | 'nextColor' | 'view'>,
+  state: Pick<AppState, 'board' | 'moves' | 'numberFrom' | 'nextColor' | 'view' | 'marks'>,
   base: Pick<BoardEntry, 'id' | 'name' | 'createdAt'> & Partial<BoardEntry>,
   now = Date.now(),
 ): BoardEntry {
   const size = state.board.size;
   const stones = state.board.serialize();
   const moves = serializeMoves(state.moves);
-  const same = base.size === size && base.stones === stones && base.moves === moves;
+  const marks = serializePoints(state.marks, size);
+  const same = base.size === size && base.stones === stones && base.moves === moves && base.marks === marks;
   return {
     id: base.id,
     name: base.name,
@@ -78,6 +81,7 @@ export function entryFromState(
     size,
     stones,
     moves,
+    marks,
     numberFrom: state.numberFrom,
     nextColor: state.nextColor,
     view: state.view,
@@ -86,12 +90,13 @@ export function entryFromState(
 
 /** entry の盤面の内容を state に反映する */
 export function applyEntry(
-  state: Pick<AppState, 'board' | 'moves' | 'numberFrom' | 'nextColor' | 'view'>,
+  state: Pick<AppState, 'board' | 'moves' | 'numberFrom' | 'nextColor' | 'view' | 'marks'>,
   entry: BoardEntry,
 ): void {
   const board = Board.deserialize(entry.size, entry.stones) ?? new Board(19);
   state.board = board;
   state.moves = deserializeMoves(board.size, entry.moves) ?? [];
+  state.marks = deserializePoints(board.size, entry.marks) ?? new Set();
   state.numberFrom = entry.numberFrom;
   state.nextColor = entry.nextColor;
   state.view = normalizeView(entry.view, board.size);
@@ -107,6 +112,7 @@ export function emptyEntry(name: string, size: number, now = Date.now()): BoardE
     size,
     stones: new Board(size).serialize(),
     moves: '',
+    marks: '',
     numberFrom: 0,
     nextColor: BLACK,
     view: fullView(size),
@@ -131,6 +137,10 @@ export function parseEntry(data: unknown): BoardEntry | null {
     size: d.size,
     stones: board.serialize(),
     moves: deserializeMoves(d.size, d.moves) ? (d.moves as string) : '',
+    marks: (() => {
+      const marks = deserializePoints(d.size, d.marks);
+      return marks ? serializePoints(marks, d.size) : '';
+    })(),
     numberFrom: typeof d.numberFrom === 'number' && Number.isInteger(d.numberFrom) && d.numberFrom >= 0 ? d.numberFrom : 0,
     nextColor: d.nextColor === WHITE ? WHITE : BLACK,
     view: normalizeView(isView(d.view) ? d.view : null, d.size),

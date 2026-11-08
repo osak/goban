@@ -41,8 +41,9 @@ describe('盤面の一覧', () => {
     s.numberFrom = 1;
     s.nextColor = WHITE;
     s.view = { x0: 0, y0: 0, x1: 6, y1: 6 };
+    s.marks = new Set([s.board.index(9, 9)]);
     const e = entryFromState(s, base, 200);
-    expect(e).toMatchObject({ id: 'a', name: '盤面 1', createdAt: 100, updatedAt: 200, size: 13, moves: 'BddWjj' });
+    expect(e).toMatchObject({ id: 'a', name: '盤面 1', createdAt: 100, updatedAt: 200, size: 13, moves: 'BddWjj', marks: 'jj' });
 
     const t = initialState();
     applyEntry(t, e);
@@ -51,6 +52,7 @@ describe('盤面の一覧', () => {
     expect(t.numberFrom).toBe(1);
     expect(t.nextColor).toBe(WHITE);
     expect(t.view).toEqual(s.view);
+    expect(t.marks).toEqual(s.marks);
   });
 
   it('石も着手の記録も変わらなければ更新時刻を変えない', () => {
@@ -58,6 +60,9 @@ describe('盤面の一覧', () => {
     const e = entryFromState(s, base, 200);
     s.view = { x0: 0, y0: 0, x1: 4, y1: 4 }; // 表示範囲だけ変える
     expect(entryFromState(s, e, 300).updatedAt).toBe(200);
+    s.marks.add(0); // △を付けるのは盤面の編集
+    expect(entryFromState(s, e, 300).updatedAt).toBe(300);
+    s.marks.clear();
     s.board.place(0, 0, BLACK, 'remove');
     expect(entryFromState(s, e, 300).updatedAt).toBe(300);
   });
@@ -110,6 +115,7 @@ describe('盤面の一覧の保存', () => {
           id: 'fixed',
           name: '  ',
           moves: 'Bzz',
+          marks: 'zz',
           numberFrom: -3,
           nextColor: 5,
           view: { x0: 0, y0: 0, x1: 99, y1: 99 },
@@ -122,6 +128,7 @@ describe('盤面の一覧の保存', () => {
     expect(lib?.entries[1]).toMatchObject({
       name: '無題',
       moves: '',
+      marks: '',
       numberFrom: 0,
       nextColor: BLACK,
       view: fullView(9),

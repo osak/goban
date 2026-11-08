@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { BLACK, Board, WHITE } from '../src/board';
 import {
   deserializeMoves,
+  deserializePoints,
   moveLabel,
   movesOnBoard,
   serializeMoves,
+  serializePoints,
   stoneNumbers,
   withoutLastMoveAt,
   type Move,
@@ -86,6 +88,24 @@ describe('着手番号', () => {
     expect(withoutLastMoveAt(moves, 0, 0, BLACK)).toBeNull();
     expect(withoutLastMoveAt(moves, 1, 1, BLACK)).toBeNull();
     expect(withoutLastMoveAt([], 1, 1, BLACK)).toBeNull();
+  });
+});
+
+describe('交点の集合の保存形式', () => {
+  it('文字列にして元に戻せる（並びは交点の順）', () => {
+    const size = 19;
+    const pts = new Set([18 * size + 18, 0, 3 * size + 15]);
+    const text = serializePoints(pts, size);
+    expect(text).toBe('aapdss');
+    expect(deserializePoints(size, text)).toEqual(pts);
+    expect(deserializePoints(size, '')).toEqual(new Set());
+  });
+
+  it('不正なら null', () => {
+    expect(deserializePoints(19, 'a')).toBeNull();
+    expect(deserializePoints(9, 'ja')).toBeNull();
+    expect(deserializePoints(19, 'A1')).toBeNull();
+    expect(deserializePoints(19, null)).toBeNull();
   });
 });
 
