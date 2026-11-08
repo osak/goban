@@ -169,8 +169,13 @@ export function draw(ctx: CanvasRenderingContext2D, p: DrawParams): void {
   }
   for (let by = view.y0; by <= view.y1; by++) {
     const text = rowLabel(by, size, p.coordStyle);
-    fillFitted(ctx, text, L.bandX / 2, Y(by), L.font, L.bandX * 0.92);
-    fillFitted(ctx, text, L.width - L.bandX / 2, Y(by), L.font, L.bandX * 0.92);
+    for (const x of [L.bandX / 2, L.width - L.bandX / 2]) {
+      if (p.coordStyle === 'japanese' && text.length > 1) {
+        fillStacked(ctx, text, x, Y(by), L.font, L.bandX * 0.92, Math.min(L.font * STACKED_HEIGHT, cell * 0.9));
+      } else {
+        fillFitted(ctx, text, x, Y(by), L.font, L.bandX * 0.92);
+      }
+    }
   }
 
   // 拡大範囲の選択中矩形
@@ -272,6 +277,34 @@ function drawNumber(ctx: CanvasRenderingContext2D, x: number, y: number, r: numb
   ctx.textBaseline = 'middle';
   // 文字の見た目の中心が石の中心に来るよう、わずかに下げる
   fillFitted(ctx, text, x, y + r * 0.05, fontPx, r * 1.62, '600 ');
+  ctx.restore();
+}
+
+/** 縦に重ねて書く漢数字の全体の高さ（em） */
+const STACKED_HEIGHT = 1.1;
+
+/**
+ * 文字を縦に重ね、縦方向に潰して高さ height に収めて書く（"十一" などの漢数字の座標用）。
+ * 幅は 1 文字分（maxW を超えれば縮める）。
+ */
+function fillStacked(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  fontPx: number,
+  maxW: number,
+  height: number,
+): void {
+  const chars = Array.from(text);
+  ctx.font = `${fontPx}px ${FONT_FAMILY}`;
+  const w = Math.max(...chars.map((ch) => ctx.measureText(ch).width));
+  const sx = w > maxW ? maxW / w : 1;
+  const sy = height / (chars.length * fontPx);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(sx, sy);
+  chars.forEach((ch, k) => ctx.fillText(ch, 0, (k - (chars.length - 1) / 2) * fontPx));
   ctx.restore();
 }
 

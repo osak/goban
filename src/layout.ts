@@ -33,9 +33,9 @@ export const LAYOUT_PARAMS = {
   minFont: 9,
   /** 上下のラベル帯の高さ（em） */
   bandY: 1.5,
-  /** 左右のラベル帯の幅（em）: "19" と "十九" */
+  /** 左右のラベル帯の幅（em）: "19" と "十九"（漢数字は 2 文字でも縦に重ねて 1 文字幅で書く） */
   bandXWestern: 1.7,
-  bandXJapanese: 2.4,
+  bandXJapanese: 1.6,
 } as const;
 
 /**
