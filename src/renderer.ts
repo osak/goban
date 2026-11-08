@@ -35,6 +35,8 @@ export interface DrawParams {
   readonly coordStyle: CoordStyle;
   /** △を付ける石のインデックス */
   readonly marks?: ReadonlySet<number> | null;
+  /** 石に書く着手番号（キーは交点のインデックス） */
+  readonly numbers?: ReadonlyMap<number, number> | null;
   /** 置く予定の石（半透明で表示） */
   readonly ghost?: (Point & { readonly color: StoneColor }) | null;
   /** 拡大範囲の選択中の矩形（対角の 2 交点） */
@@ -132,12 +134,21 @@ export function draw(ctx: CanvasRenderingContext2D, p: DrawParams): void {
     }
   }
 
-  // △マーク（石と反対の色で描く）
+  // △マーク（石と反対の色で描く）。番号を書く石には付けない
   for (const idx of p.marks ?? []) {
+    if (p.numbers?.has(idx)) continue;
     const bx = idx % size;
     const by = (idx - bx) / size;
     if (!inView(bx, by)) continue;
     drawTriangle(ctx, X(bx), Y(by), r, board.grid[idx] === BLACK ? '#ffffff' : '#000000');
+  }
+
+  // 着手番号（石と反対の色で描く）
+  for (const [idx, n] of p.numbers ?? []) {
+    const bx = idx % size;
+    const by = (idx - bx) / size;
+    if (!inView(bx, by) || board.grid[idx] === EMPTY) continue;
+    drawNumber(ctx, X(bx), Y(by), r, String(n), board.grid[idx] === BLACK ? '#ffffff' : '#000000');
   }
 
   // 置く予定の石（マウスホバー時）
@@ -253,6 +264,17 @@ function drawTriangle(ctx: CanvasRenderingContext2D, x: number, y: number, r: nu
   ctx.restore();
 }
 
+function drawNumber(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, text: string, color: string): void {
+  const fontPx = r * (text.length <= 1 ? 1.05 : text.length === 2 ? 0.95 : 0.78);
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // 文字の見た目の中心が石の中心に来るよう、わずかに下げる
+  fillFitted(ctx, text, x, y + r * 0.05, fontPx, r * 1.62, '600 ');
+  ctx.restore();
+}
+
 /** 幅 maxW に収まるよう必要なら文字を小さくして描く */
 function fillFitted(
   ctx: CanvasRenderingContext2D,
@@ -261,9 +283,10 @@ function fillFitted(
   y: number,
   fontPx: number,
   maxW: number,
+  weight = '',
 ): void {
-  ctx.font = `${fontPx}px ${FONT_FAMILY}`;
+  ctx.font = `${weight}${fontPx}px ${FONT_FAMILY}`;
   const w = ctx.measureText(text).width;
-  if (w > maxW) ctx.font = `${Math.max(6, (fontPx * maxW) / w)}px ${FONT_FAMILY}`;
+  if (w > maxW) ctx.font = `${weight}${Math.max(6, (fontPx * maxW) / w)}px ${FONT_FAMILY}`;
   ctx.fillText(text, x, y);
 }

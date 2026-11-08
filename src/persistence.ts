@@ -5,6 +5,7 @@
 
 import { BLACK, Board, CAPTURE_MODES, WHITE, type CaptureMode, type StoneColor } from './board';
 import { COORD_STYLES, type CoordStyle } from './coords';
+import { NUMBER_STYLES, deserializeMoves, serializeMoves, type NumberStyle } from './moves';
 import { THEME_NAMES, type ThemeName } from './renderer';
 import { BOARD_SIZES, COLOR_MODES, type AppState, type ColorMode } from './state';
 import { isView, normalizeView, type View } from './view';
@@ -21,6 +22,11 @@ export interface SavedState {
   readonly coordStyle: CoordStyle;
   readonly theme: ThemeName;
   readonly view: View;
+  /** serializeMoves() の文字列 */
+  readonly moves: string;
+  readonly numbering: boolean;
+  readonly numberFrom: number;
+  readonly numberStyle: NumberStyle;
 }
 
 export type KeyValueStorage = Pick<Storage, 'getItem' | 'setItem'>;
@@ -44,6 +50,10 @@ export function toSaved(state: AppState): SavedState {
     coordStyle: state.coordStyle,
     theme: state.theme,
     view: state.view,
+    moves: serializeMoves(state.moves),
+    numbering: state.numbering,
+    numberFrom: state.numberFrom,
+    numberStyle: state.numberStyle,
   };
 }
 
@@ -60,6 +70,8 @@ export function applySaved(state: AppState, data: unknown): void {
     if (board) {
       state.board = board;
       state.view = normalizeView(isView(d.view) ? d.view : null, board.size);
+      // 着手の記録は盤面と組なので、盤面を読み込んだときだけ使う
+      state.moves = deserializeMoves(board.size, d.moves) ?? [];
     }
   }
   if (oneOf(COLOR_MODES, d.colorMode)) state.colorMode = d.colorMode;
@@ -67,6 +79,11 @@ export function applySaved(state: AppState, data: unknown): void {
   if (oneOf(CAPTURE_MODES, d.captureMode)) state.captureMode = d.captureMode;
   if (oneOf(COORD_STYLES, d.coordStyle)) state.coordStyle = d.coordStyle;
   if (oneOf(THEME_NAMES, d.theme)) state.theme = d.theme;
+  if (typeof d.numbering === 'boolean') state.numbering = d.numbering;
+  if (typeof d.numberFrom === 'number' && Number.isInteger(d.numberFrom) && d.numberFrom >= 0) {
+    state.numberFrom = d.numberFrom;
+  }
+  if (oneOf(NUMBER_STYLES, d.numberStyle)) state.numberStyle = d.numberStyle;
 }
 
 export function saveState(storage: KeyValueStorage | null, state: AppState): void {

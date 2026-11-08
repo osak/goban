@@ -148,6 +148,10 @@ button {
   .panel .chip {
     align-self: flex-start;
   }
+  .movelog-list {
+    max-height: 40vh;
+    max-height: 40dvh;
+  }
 }
 
 /* ---------- 部品 ---------- */
@@ -377,6 +381,98 @@ button {
 .toast.show {
   opacity: 1;
   transform: translate(-50%, 0);
+}
+
+.seg.seg-small button {
+  min-height: 28px;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+/* ---------- 着手のログ ---------- */
+
+.movelog {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.movelog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.movelog-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.movelog-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 4px;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  max-height: min(9.5em, 22vh);
+  overflow-y: auto;
+  background: var(--seg-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.movelog-list button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.movelog-list button:hover {
+  background: var(--hover);
+}
+
+.movelog-list .mv-n {
+  min-width: 1.6em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* 番号を付ける範囲より前の手 */
+.movelog-list button.before {
+  opacity: 0.5;
+}
+
+/* 盤上に残っていない石（取られた・消された） */
+.movelog-list button.gone .mv-pt {
+  text-decoration: line-through;
+}
+
+.movelog-list button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  opacity: 1;
+}
+
+.movelog-list button[aria-pressed="true"] .mv-n {
+  color: inherit;
+}
+
+.movelog-list button.next {
+  border-style: dashed;
 }
 
 .noscript {

@@ -4,6 +4,7 @@
 
 import { BLACK, Board, WHITE, type CaptureMode, type StoneColor } from './board';
 import type { CoordStyle } from './coords';
+import type { Move, NumberStyle } from './moves';
 import type { ThemeName } from './renderer';
 import { fullView, type View } from './view';
 
@@ -26,6 +27,13 @@ export interface AppState {
   theme: ThemeName;
   view: View;
   tool: Tool;
+  /** 石を置いた順の記録 */
+  moves: Move[];
+  /** 石に着手番号を表示するか */
+  numbering: boolean;
+  /** 番号を付け始める手（moves のインデックス）。moves.length 以上なら次に置く手から */
+  numberFrom: number;
+  numberStyle: NumberStyle;
 }
 
 export function initialState(size = 19): AppState {
@@ -38,6 +46,10 @@ export function initialState(size = 19): AppState {
     theme: 'wood',
     view: fullView(size),
     tool: 'stone',
+    moves: [],
+    numbering: false,
+    numberFrom: 0,
+    numberStyle: 'relative',
   };
 }
 

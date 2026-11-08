@@ -39,6 +39,26 @@
         </div>
       </div>
 
+      <div class="row">
+        <span class="row-label">着手番号</span>
+        <div class="seg" id="numbering" role="group" aria-label="着手番号">
+          <button type="button" data-value="off">表示しない</button>
+          <button type="button" data-value="on">表示する</button>
+        </div>
+      </div>
+
+      <section class="movelog" id="moveLog" aria-label="着手のログ" hidden>
+        <div class="movelog-head">
+          <span class="movelog-status" id="moveLogStatus"></span>
+          <div class="seg seg-small" id="numberStyle" role="group" aria-label="番号の付け方">
+            <button type="button" data-value="relative" title="起点の手を 1 として番号を付ける">1から</button>
+            <button type="button" data-value="absolute" title="何手目かをそのまま番号にする">手数</button>
+          </div>
+        </div>
+        <ol class="movelog-list" id="moveLogList"></ol>
+        <p class="help">手をタップすると、その手から番号を付けます。「次の手から」でこれから置く石だけに番号を付けます。</p>
+      </section>
+
       <div class="toolbar">
         <button type="button" class="tool-btn" id="undo" title="元に戻す (Ctrl+Z)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
@@ -96,6 +116,7 @@
         <p class="help">
           石のない交点をタップで石を置き、石をタップで取り除きます。黒・白の連打中はドラッグで続けて置けます（石の上から始めると続けて消せます）。
           PNG は表示中の範囲を座標付きで保存します。
+          「着手番号」を表示にすると、石を置いた順の番号を石に表示します（ログの手をタップするとその手から番号を付けます）。
         </p>
       </div>
     </aside>
