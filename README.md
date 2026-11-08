@@ -22,6 +22,15 @@ npm run preview   # ビルド結果をローカルで確認
 
 ## GitHub Actions
 
+### GitHub Pages での公開
+
+`.github/workflows/deploy-pages.yml` がデフォルトブランチへの push のたびにテストと `dist/` のビルドを行い、
+GitHub Pages に公開します（https://osak.github.io/goban/ ）。「Run workflow」から手動でも実行できます。
+
+最初に一度だけ、リポジトリの Settings → Pages → Build and deployment → Source を「GitHub Actions」にしてください。
+
+### 1 ファイル版
+
 `.github/workflows/build-single.yml` が push のたびにテストと 1 ファイル版のビルドを行い、
 `goban.html` を成果物 `goban-single` としてアップロードします（Actions の実行結果ページからダウンロードできます）。
 「Run workflow」から手動でも実行できます。
