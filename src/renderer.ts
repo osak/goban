@@ -314,7 +314,16 @@ function drawTriangle(ctx: CanvasRenderingContext2D, x: number, y: number, r: nu
   ctx.restore();
 }
 
-/** 石に番号を書く。halo を指定すると文字の周りをその色で縁取る */
+interface NumberStyleOptions {
+  /** 文字の周りを縁取る色 */
+  readonly halo?: string;
+  /** 縁取りの太さ（石の半径に対する比） */
+  readonly haloWidth?: number;
+  /** ふだんの文字の大きさに対する倍率 */
+  readonly scale?: number;
+}
+
+/** 石に番号を書く */
 function drawNumber(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -322,26 +331,27 @@ function drawNumber(
   r: number,
   text: string,
   color: string,
-  halo?: string,
+  { halo, haloWidth = 0.11, scale = 1 }: NumberStyleOptions = {},
 ): void {
-  const fontPx = r * (text.length <= 1 ? 1.05 : text.length === 2 ? 0.95 : 0.78);
+  const fontPx = r * (text.length <= 1 ? 1.05 : text.length === 2 ? 0.95 : 0.78) * scale;
   ctx.save();
   ctx.fillStyle = color;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   if (halo) {
     ctx.strokeStyle = halo;
-    ctx.lineWidth = r * 0.2;
+    ctx.lineWidth = r * haloWidth;
     ctx.lineJoin = 'round';
   }
   // 文字の見た目の中心が石の中心に来るよう、わずかに下げる
-  fillFitted(ctx, text, x, y + r * 0.05, fontPx, r * 1.62, '600 ', Boolean(halo));
+  fillFitted(ctx, text, x, y + r * 0.05, fontPx, r * 1.62 * scale, '600 ', Boolean(halo));
   ctx.restore();
 }
 
 /**
- * 番号と△マークの両方がある石。番号の方が大事なので番号はふだんと同じ大きさで書き、
- * その後ろに △ を描く。番号の周りを石の色（halo）で縁取って、重なる △ の線を消す。
+ * 番号と△マークの両方がある石。石いっぱいの △ を描き、その上に少しだけ小さくした番号を書く。
+ * 番号の周りを石の色（halo）で細く縁取って、重なる △ の線を消す。
+ * 縁取りを細くし番号を小さめにするのは、△ の頂点や辺が削られて目障りにならないようにするため。
  */
 function drawNumberInTriangle(
   ctx: CanvasRenderingContext2D,
@@ -352,11 +362,11 @@ function drawNumberInTriangle(
   color: string,
   halo: string,
 ): void {
-  const R = r * 0.74; // △ の外接円の半径
-  const cy = y + r * 0.06; // △ の重心
+  const R = r * 0.86; // △ の外接円の半径
+  const cy = y + r * 0.09; // △ の重心（石の中心より少し下にすると △ が石の中に収まる）
   ctx.save();
   ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(1, r * 0.1);
+  ctx.lineWidth = Math.max(1, r * 0.085);
   ctx.lineJoin = 'round';
   ctx.beginPath();
   for (let k = 0; k < 3; k++) {
@@ -368,7 +378,7 @@ function drawNumberInTriangle(
   }
   ctx.closePath();
   ctx.stroke();
-  drawNumber(ctx, x, y, r, text, color, halo);
+  drawNumber(ctx, x, y, r, text, color, { halo, haloWidth: 0.11, scale: 0.88 });
   ctx.restore();
 }
 
