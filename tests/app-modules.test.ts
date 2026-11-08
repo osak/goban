@@ -72,6 +72,13 @@ describe('保存と復元', () => {
     s.coordStyle = 'japanese';
     s.theme = 'print';
     s.view = { x0: 0, y0: 0, x1: 6, y1: 6 };
+    s.moves = [
+      { x: 3, y: 3, color: BLACK },
+      { x: 9, y: 9, color: WHITE },
+    ];
+    s.numbering = true;
+    s.numberFrom = 1;
+    s.numberStyle = 'absolute';
     saveState(storage, s);
 
     const t = initialState();
@@ -91,6 +98,10 @@ describe('保存と復元', () => {
       coordStyle: 1,
       theme: 'dark',
       view: { x0: 2 },
+      moves: 'Baa',
+      numbering: 'yes',
+      numberFrom: -1,
+      numberStyle: 'roman',
     });
     expect(s.board.size).toBe(19);
     expect(s.colorMode).toBe('black');
@@ -98,6 +109,18 @@ describe('保存と復元', () => {
     expect(s.coordStyle).toBe('western');
     expect(s.theme).toBe('wood');
     expect(s.view).toEqual(fullView(19));
+    expect(s.moves).toEqual([]); // 盤面を読み込まないときは記録も使わない
+    expect(s.numbering).toBe(false);
+    expect(s.numberFrom).toBe(0);
+    expect(s.numberStyle).toBe('relative');
+  });
+
+  it('着手の記録が壊れていたら空にする', () => {
+    const s = initialState();
+    s.moves = [{ x: 0, y: 0, color: BLACK }];
+    applySaved(s, { size: 9, stones: '0'.repeat(81), moves: 'Bzz' });
+    expect(s.board.size).toBe(9);
+    expect(s.moves).toEqual([]);
   });
 
   it('盤面が正しければ表示範囲は盤内に直して使う', () => {

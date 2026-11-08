@@ -3,10 +3,11 @@
  */
 
 import { BLACK, Board, CAPTURE_MODES, EMPTY, opposite, type StoneColor } from './board';
-import { COORD_STYLES } from './coords';
+import { COORD_STYLES, pointName } from './coords';
 import { downloadBlob, exportFileName, renderPng } from './export';
 import { UndoHistory } from './history';
 import { computeLayout, hitTest, hitTestClamped, hitsAlongSegment, type Layout } from './layout';
+import { NUMBER_STYLES, movesOnBoard, stoneNumbers, withoutLastMoveAt, type Move } from './moves';
 import { getStorage, loadState, saveState } from './persistence';
 import { THEME_NAMES, draw } from './renderer';
 import { BOARD_SIZES, COLOR_MODES, currentColor, initialState, type AppState, type Tool } from './state';
@@ -28,6 +29,7 @@ interface Snapshot {
   readonly size: number;
   readonly grid: Uint8Array;
   readonly nextColor: StoneColor;
+  readonly moves: readonly Move[];
 }
 
 /** 石を置く／消す操作（タップまたはドラッグ）の途中経過 */
@@ -95,10 +97,15 @@ export class GobanApp {
     nextColorIcon: byId('nextColorIcon', HTMLElement),
     nextColorText: byId('nextColorText', HTMLElement),
     zoomHint: byId('zoomHint', HTMLElement),
+    moveLog: byId('moveLog', HTMLElement),
+    moveLogStatus: byId('moveLogStatus', HTMLElement),
+    moveLogList: byId('moveLogList', HTMLOListElement),
     toast: byId('toast', HTMLElement),
   };
   /** 選択ボタン群の表示を状態に合わせる関数 */
   private readonly segmentUpdaters: Array<() => void> = [];
+  /** 着手のログを最後に描き直したときの手数（増えたら末尾までスクロールする） */
+  private loggedMoves = -1;
 
   constructor() {
     const ctx = this.canvas.getContext('2d');
@@ -146,10 +153,17 @@ export class GobanApp {
       theme,
       coordStyle,
       marks: captureMode === 'mark' ? board.deadStones() : null,
+      numbers: this.numbers(),
       ghost,
       selection: this.selection,
       scale: this.scale,
     });
+  }
+
+  /** 石に書く着手番号（表示しないときは null） */
+  private numbers(): Map<number, number> | null {
+    const { board, moves, numbering, numberFrom, numberStyle } = this.state;
+    return numbering ? stoneNumbers(board, moves, numberFrom, numberStyle) : null;
   }
 
   /** 表示領域の大きさに合わせてキャンバスの大きさを決め直す */
@@ -175,7 +189,8 @@ export class GobanApp {
   // ---------------------------------------------------------------------------
 
   private snapshot(): Snapshot {
-    return { size: this.state.board.size, grid: this.state.board.grid.slice(), nextColor: this.state.nextColor };
+    const { board, nextColor, moves } = this.state;
+    return { size: board.size, grid: board.grid.slice(), nextColor, moves: moves.slice() };
   }
 
   private applySnapshot(snap: Snapshot): void {
@@ -189,6 +204,7 @@ export class GobanApp {
       this.requestRender();
     }
     this.state.nextColor = snap.nextColor;
+    this.state.moves = snap.moves.slice();
     this.changed();
   }
 
@@ -284,12 +300,13 @@ export class GobanApp {
     if (stroke.action === 'place') {
       const res = board.place(p.x, p.y, stroke.color, state.captureMode);
       if (res.ok) {
+        state.moves.push({ x: p.x, y: p.y, color: stroke.color });
         if (state.colorMode === 'alternate') state.nextColor = opposite(stroke.color);
       } else if (res.reason === 'suicide') {
         this.toast('そこには置けません（呼吸点がありません）');
       }
     } else {
-      const removed = board.remove(p.x, p.y);
+      const removed = this.eraseStone(p.x, p.y);
       // 交互モードで石を取り除いたら、その色をもう一度置ける手番にする
       if (state.colorMode === 'alternate' && removed !== EMPTY) state.nextColor = removed;
     }
@@ -326,8 +343,11 @@ export class GobanApp {
           if (stroke.visited.has(i)) continue;
           stroke.visited.add(i);
           if (stroke.action === 'place') {
-            if (board.grid[i] === EMPTY && board.place(p.x, p.y, stroke.color, state.captureMode).ok) changed = true;
-          } else if (board.remove(p.x, p.y) !== EMPTY) {
+            if (board.grid[i] === EMPTY && board.place(p.x, p.y, stroke.color, state.captureMode).ok) {
+              state.moves.push({ x: p.x, y: p.y, color: stroke.color });
+              changed = true;
+            }
+          } else if (this.eraseStone(p.x, p.y) !== EMPTY) {
             changed = true;
           }
         }
@@ -368,11 +388,25 @@ export class GobanApp {
     if (this.stroke && e.pointerId === this.stroke.pointerId) this.finishStroke();
   }
 
+  /**
+   * 石を取り除き、取り除いた石の色を返す。
+   * 最後に置いた石なら置き間違いの修正とみなして着手の記録からも消す。
+   * それ以外の石は記録に残す（取られた石を手で取り除く場合など）。
+   */
+  private eraseStone(x: number, y: number): ReturnType<Board['remove']> {
+    const removed = this.state.board.remove(x, y);
+    if (removed !== EMPTY) {
+      const moves = withoutLastMoveAt(this.state.moves, x, y, removed);
+      if (moves) this.state.moves = moves;
+    }
+    return removed;
+  }
+
   private finishStroke(): void {
     const stroke = this.stroke;
     if (!stroke) return;
     this.stroke = null;
-    if (sameGrid(stroke.before.grid, this.state.board.grid)) {
+    if (sameGrid(stroke.before.grid, this.state.board.grid) && stroke.before.moves.length === this.state.moves.length) {
       this.state.nextColor = stroke.before.nextColor;
     } else {
       this.history.record(stroke.before);
@@ -409,19 +443,31 @@ export class GobanApp {
     this.state.board = new Board(size);
     this.state.view = fullView(size);
     this.state.nextColor = BLACK;
+    this.resetMoves();
     this.hover = null;
     this.relayout();
     this.changed();
   }
 
   private clearBoard(): void {
-    if (this.stroke || this.state.board.isEmpty()) return;
-    if (!window.confirm('盤面の石をすべて消しますか？\n（「元に戻す」で復元できます）')) return;
+    const { board, moves } = this.state;
+    if (this.stroke || (board.isEmpty() && moves.length === 0)) return;
+    const message = board.isEmpty()
+      ? '着手のログを消しますか？\n（「元に戻す」で復元できます）'
+      : '盤面の石をすべて消しますか？\n（「元に戻す」で復元できます）';
+    if (!window.confirm(message)) return;
     this.history.record(this.snapshot());
-    this.state.board.clear();
+    board.clear();
     this.state.nextColor = BLACK;
+    this.resetMoves();
     this.requestRender();
     this.changed();
+  }
+
+  /** 盤面を新しくしたときに着手の記録と番号の起点を消す */
+  private resetMoves(): void {
+    this.state.moves = [];
+    this.state.numberFrom = 0;
   }
 
   private async exportPng(): Promise<void> {
@@ -432,6 +478,7 @@ export class GobanApp {
       theme,
       coordStyle,
       marks: captureMode === 'mark' ? board.deadStones() : null,
+      numbers: this.numbers(),
     });
     if (!blob) {
       this.toast('PNG の作成に失敗しました');
@@ -478,6 +525,21 @@ export class GobanApp {
     });
     this.bindSegment('captureMode', CAPTURE_MODES, () => state.captureMode, (v) => {
       state.captureMode = v;
+      settingChanged();
+    });
+    this.bindSegment('numbering', ['off', 'on'] as const, () => (state.numbering ? 'on' : 'off'), (v) => {
+      state.numbering = v === 'on';
+      settingChanged();
+    });
+    this.bindSegment('numberStyle', NUMBER_STYLES, () => state.numberStyle, (v) => {
+      state.numberStyle = v;
+      settingChanged();
+    });
+    ui.moveLogList.addEventListener('click', (e) => {
+      const btn = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('button[data-index]') : null;
+      const index = Number(btn?.dataset.index);
+      if (!Number.isInteger(index) || index < 0) return;
+      state.numberFrom = index;
       settingChanged();
     });
     this.bindSegment('boardSize', BOARD_SIZES, () => state.board.size, (v) => this.setBoardSize(v));
@@ -536,6 +598,65 @@ export class GobanApp {
     ui.resetZoom.disabled = isFullView(state.view, state.board.size);
     ui.zoom.setAttribute('aria-pressed', String(state.tool === 'zoom'));
     ui.zoomHint.hidden = state.tool !== 'zoom';
+    ui.moveLog.hidden = !state.numbering;
+    if (state.numbering) this.updateMoveLog();
+  }
+
+  /** 着手のログを描き直す */
+  private updateMoveLog(): void {
+    const { board, moves, numberFrom, numberStyle, coordStyle } = this.state;
+    const { moveLogStatus: status, moveLogList: list } = this.ui;
+    const onBoard = movesOnBoard(board, moves);
+    const from = Math.min(numberFrom, moves.length);
+
+    const items = moves.map((m, i) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.index = String(i);
+      btn.setAttribute('aria-pressed', String(i === from));
+      if (i < from) btn.classList.add('before');
+      if (!onBoard.has(i)) {
+        btn.classList.add('gone');
+        btn.title = '盤上にありません';
+      }
+      const num = document.createElement('span');
+      num.className = 'mv-n';
+      num.textContent = String(i + 1);
+      const icon = document.createElement('span');
+      icon.className = `stone-icon ${m.color === BLACK ? 'black' : 'white'}`;
+      const pt = document.createElement('span');
+      pt.className = 'mv-pt';
+      pt.textContent = pointName(m.x, m.y, board.size, coordStyle);
+      btn.append(num, icon, pt);
+      return btn;
+    });
+    // 末尾に「次の手から」（これから置く石から番号を付ける）
+    const next = document.createElement('button');
+    next.type = 'button';
+    next.className = 'next';
+    next.dataset.index = String(moves.length);
+    next.setAttribute('aria-pressed', String(from === moves.length));
+    next.textContent = '次の手から';
+    items.push(next);
+    list.replaceChildren(
+      ...items.map((b) => {
+        const li = document.createElement('li');
+        li.append(b);
+        return li;
+      }),
+    );
+
+    const first = numberStyle === 'absolute' ? from + 1 : 1;
+    const last = first + moves.length - from - 1;
+    status.textContent =
+      moves.length === 0
+        ? 'まだ石が置かれていません'
+        : from >= moves.length
+          ? `${moves.length}手 ・ 次の手から番号`
+          : `${moves.length}手 ・ ${from + 1}手目から番号（${first}〜${last}）`;
+
+    if (moves.length > this.loggedMoves) list.scrollTop = list.scrollHeight;
+    this.loggedMoves = moves.length;
   }
 
   private toast(message: string): void {
