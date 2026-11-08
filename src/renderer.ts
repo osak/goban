@@ -134,21 +134,22 @@ export function draw(ctx: CanvasRenderingContext2D, p: DrawParams): void {
     }
   }
 
-  // △マーク（石と反対の色で描く）。番号を書く石には付けない
-  for (const idx of p.marks ?? []) {
-    if (p.numbers?.has(idx)) continue;
-    const bx = idx % size;
-    const by = (idx - bx) / size;
-    if (!inView(bx, by)) continue;
-    drawTriangle(ctx, X(bx), Y(by), r, board.grid[idx] === BLACK ? '#ffffff' : '#000000');
-  }
-
-  // 着手番号（石と反対の色で描く）
-  for (const [idx, n] of p.numbers ?? []) {
+  // △マークと着手番号（石と反対の色で描く）。両方ある石は大きめの △ の中に小さめの番号を書く
+  const marks = p.marks ?? new Set<number>();
+  const numbers = p.numbers ?? new Map<number, number>();
+  for (const idx of new Set([...marks, ...numbers.keys()])) {
     const bx = idx % size;
     const by = (idx - bx) / size;
     if (!inView(bx, by) || board.grid[idx] === EMPTY) continue;
-    drawNumber(ctx, X(bx), Y(by), r, String(n), board.grid[idx] === BLACK ? '#ffffff' : '#000000');
+    const color = board.grid[idx] === BLACK ? '#ffffff' : '#000000';
+    const n = numbers.get(idx);
+    if (n === undefined) {
+      drawTriangle(ctx, X(bx), Y(by), r, color);
+    } else if (marks.has(idx)) {
+      drawNumberInTriangle(ctx, X(bx), Y(by), r, String(n), color);
+    } else {
+      drawNumber(ctx, X(bx), Y(by), r, String(n), color);
+    }
   }
 
   // 置く予定の石（マウスホバー時）
@@ -318,6 +319,40 @@ function drawNumber(ctx: CanvasRenderingContext2D, x: number, y: number, r: numb
   ctx.textBaseline = 'middle';
   // 文字の見た目の中心が石の中心に来るよう、わずかに下げる
   fillFitted(ctx, text, x, y + r * 0.05, fontPx, r * 1.62, '600 ');
+  ctx.restore();
+}
+
+/** 番号と△マークの両方がある石: 石いっぱいの △ の中に小さめの番号を書く */
+function drawNumberInTriangle(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  text: string,
+  color: string,
+): void {
+  const R = r * 0.86; // △ の外接円の半径
+  const cy = y + r * 0.09; // △ の重心（石の中心より少し下にすると △ が石の中に収まる）
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, r * 0.075);
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  for (let k = 0; k < 3; k++) {
+    const angle = -Math.PI / 2 + (k * 2 * Math.PI) / 3;
+    const px = x + R * Math.cos(angle);
+    const py = cy + R * Math.sin(angle);
+    if (k === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  // 番号は △ の重心より少し下（△ の幅が広いところ）に、辺にかからない大きさで書く
+  const fontPx = r * (text.length <= 1 ? 0.68 : text.length === 2 ? 0.56 : 0.5);
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  fillFitted(ctx, text, x, cy + r * 0.08, fontPx, R * (text.length <= 2 ? 0.8 : 0.66), '600 ');
   ctx.restore();
 }
 
