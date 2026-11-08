@@ -134,21 +134,25 @@ export function draw(ctx: CanvasRenderingContext2D, p: DrawParams): void {
     }
   }
 
-  // △マーク（石と反対の色で描く）。番号を書く石には付けない
-  for (const idx of p.marks ?? []) {
-    if (p.numbers?.has(idx)) continue;
-    const bx = idx % size;
-    const by = (idx - bx) / size;
-    if (!inView(bx, by)) continue;
-    drawTriangle(ctx, X(bx), Y(by), r, board.grid[idx] === BLACK ? '#ffffff' : '#000000');
-  }
-
-  // 着手番号（石と反対の色で描く）
-  for (const [idx, n] of p.numbers ?? []) {
+  // △マークと着手番号（石と反対の色で描く）。両方ある石は番号の後ろに △ を描く
+  const marks = p.marks ?? new Set<number>();
+  const numbers = p.numbers ?? new Map<number, number>();
+  for (const idx of new Set([...marks, ...numbers.keys()])) {
     const bx = idx % size;
     const by = (idx - bx) / size;
     if (!inView(bx, by) || board.grid[idx] === EMPTY) continue;
-    drawNumber(ctx, X(bx), Y(by), r, String(n), board.grid[idx] === BLACK ? '#ffffff' : '#000000');
+    const color = board.grid[idx] === BLACK ? '#ffffff' : '#000000';
+    const n = numbers.get(idx);
+    if (n === undefined) {
+      drawTriangle(ctx, X(bx), Y(by), r, color);
+    } else if (marks.has(idx)) {
+      // 縁取りは石の地の色
+      const black = board.grid[idx] === BLACK;
+      const halo = theme.shaded ? (black ? '#141414' : '#f3f2ee') : black ? '#000000' : '#ffffff';
+      drawNumberInTriangle(ctx, X(bx), Y(by), r, String(n), color, halo);
+    } else {
+      drawNumber(ctx, X(bx), Y(by), r, String(n), color);
+    }
   }
 
   // 置く予定の石（マウスホバー時）
@@ -310,14 +314,61 @@ function drawTriangle(ctx: CanvasRenderingContext2D, x: number, y: number, r: nu
   ctx.restore();
 }
 
-function drawNumber(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, text: string, color: string): void {
+/** 石に番号を書く。halo を指定すると文字の周りをその色で縁取る */
+function drawNumber(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  text: string,
+  color: string,
+  halo?: string,
+): void {
   const fontPx = r * (text.length <= 1 ? 1.05 : text.length === 2 ? 0.95 : 0.78);
   ctx.save();
   ctx.fillStyle = color;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  if (halo) {
+    ctx.strokeStyle = halo;
+    ctx.lineWidth = r * 0.2;
+    ctx.lineJoin = 'round';
+  }
   // 文字の見た目の中心が石の中心に来るよう、わずかに下げる
-  fillFitted(ctx, text, x, y + r * 0.05, fontPx, r * 1.62, '600 ');
+  fillFitted(ctx, text, x, y + r * 0.05, fontPx, r * 1.62, '600 ', Boolean(halo));
+  ctx.restore();
+}
+
+/**
+ * 番号と△マークの両方がある石。番号の方が大事なので番号はふだんと同じ大きさで書き、
+ * その後ろに △ を描く。番号の周りを石の色（halo）で縁取って、重なる △ の線を消す。
+ */
+function drawNumberInTriangle(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  text: string,
+  color: string,
+  halo: string,
+): void {
+  const R = r * 0.74; // △ の外接円の半径
+  const cy = y + r * 0.06; // △ の重心
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, r * 0.1);
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  for (let k = 0; k < 3; k++) {
+    const angle = -Math.PI / 2 + (k * 2 * Math.PI) / 3;
+    const px = x + R * Math.cos(angle);
+    const py = cy + R * Math.sin(angle);
+    if (k === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  drawNumber(ctx, x, y, r, text, color, halo);
   ctx.restore();
 }
 
@@ -358,9 +409,12 @@ function fillFitted(
   fontPx: number,
   maxW: number,
   weight = '',
+  outline = false,
 ): void {
   ctx.font = `${weight}${fontPx}px ${FONT_FAMILY}`;
   const w = ctx.measureText(text).width;
   if (w > maxW) ctx.font = `${weight}${Math.max(6, (fontPx * maxW) / w)}px ${FONT_FAMILY}`;
+  // outline のときは今の strokeStyle・lineWidth で縁取ってから塗る
+  if (outline) ctx.strokeText(text, x, y);
   ctx.fillText(text, x, y);
 }
