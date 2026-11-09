@@ -36,6 +36,11 @@ export interface AppState {
   numberStyle: NumberStyle;
   /** 手で△を付けた石（交点のインデックス）。囲まれた石の△とは別 */
   marks: Set<number>;
+  /**
+   * 「△マーク」モードで取られた石（交点のインデックス）。盤上に残して △ を付け、取りの判定では空点とみなす。
+   * ほかのモードでは空
+   */
+  captured: Set<number>;
 }
 
 export function initialState(size = 19): AppState {
@@ -53,6 +58,7 @@ export function initialState(size = 19): AppState {
     numberFrom: 0,
     numberStyle: 'relative',
     marks: new Set(),
+    captured: new Set(),
   };
 }
 
