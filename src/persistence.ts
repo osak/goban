@@ -5,6 +5,7 @@
 
 import { BLACK, Board, CAPTURE_MODES, WHITE, type CaptureMode, type StoneColor } from './board';
 import { COORD_STYLES, type CoordStyle } from './coords';
+import { isLabelText } from './labels';
 import { NUMBER_STYLES, deserializeMoves, serializeMoves, type NumberStyle } from './moves';
 import { THEME_NAMES, type ThemeName } from './renderer';
 import { BOARD_SIZES, COLOR_MODES, type AppState, type ColorMode } from './state';
@@ -27,6 +28,8 @@ export interface SavedState {
   readonly numbering: boolean;
   readonly numberFrom: number;
   readonly numberStyle: NumberStyle;
+  /** 「文字」で書く文字（以前の版の保存データにはない） */
+  readonly labelText?: string;
 }
 
 export type KeyValueStorage = Pick<Storage, 'getItem' | 'setItem'>;
@@ -54,6 +57,7 @@ export function toSaved(state: AppState): SavedState {
     numbering: state.numbering,
     numberFrom: state.numberFrom,
     numberStyle: state.numberStyle,
+    labelText: state.labelText,
   };
 }
 
@@ -84,6 +88,7 @@ export function applySaved(state: AppState, data: unknown): void {
     state.numberFrom = d.numberFrom;
   }
   if (oneOf(NUMBER_STYLES, d.numberStyle)) state.numberStyle = d.numberStyle;
+  if (d.labelText === '' || isLabelText(d.labelText)) state.labelText = d.labelText;
 }
 
 export function saveState(storage: KeyValueStorage | null, state: AppState): void {

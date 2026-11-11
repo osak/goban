@@ -37,6 +37,8 @@ export interface DrawParams {
   readonly marks?: ReadonlySet<number> | null;
   /** 石に書く着手番号（キーは交点のインデックス） */
   readonly numbers?: ReadonlyMap<number, number> | null;
+  /** 交点に書く 1 文字（キーは交点のインデックス）。△や番号と重なってもそのまま上に書く */
+  readonly labels?: ReadonlyMap<number, string> | null;
   /** 置く予定の石（半透明で表示） */
   readonly ghost?: (Point & { readonly color: StoneColor }) | null;
   /** 拡大範囲の選択中の矩形（対角の 2 交点） */
@@ -152,6 +154,23 @@ export function draw(ctx: CanvasRenderingContext2D, p: DrawParams): void {
       drawNumberInTriangle(ctx, X(bx), Y(by), r, String(n), color, halo);
     } else {
       drawNumber(ctx, X(bx), Y(by), r, String(n), color);
+    }
+  }
+
+  // 交点に書いた文字。石の上は石と反対の色、空点は盤の色で線を消してから書く
+  for (const [idx, text] of p.labels ?? []) {
+    const bx = idx % size;
+    const by = (idx - bx) / size;
+    if (!inView(bx, by)) continue;
+    const c = board.grid[idx];
+    if (c === EMPTY) {
+      ctx.fillStyle = theme.background;
+      ctx.beginPath();
+      ctx.arc(X(bx), Y(by), r * 0.72, 0, Math.PI * 2);
+      ctx.fill();
+      drawLabel(ctx, X(bx), Y(by), r, text, theme.label);
+    } else {
+      drawLabel(ctx, X(bx), Y(by), r, text, c === BLACK ? '#ffffff' : '#000000');
     }
   }
 
@@ -379,6 +398,16 @@ function drawNumberInTriangle(
   ctx.closePath();
   ctx.stroke();
   drawNumber(ctx, x, y, r, text, color, { halo, haloWidth: 0.11, scale: 0.88 });
+  ctx.restore();
+}
+
+/** 交点に 1 文字を書く */
+function drawLabel(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, text: string, color: string): void {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  fillFitted(ctx, text, x, y + r * 0.05, r * 1.15, r * 1.5, '600 ');
   ctx.restore();
 }
 

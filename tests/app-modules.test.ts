@@ -79,6 +79,7 @@ describe('保存と復元', () => {
     s.numbering = true;
     s.numberFrom = 1;
     s.numberStyle = 'absolute';
+    s.labelText = 'あ';
     saveState(storage, s);
 
     const t = initialState();
@@ -102,6 +103,7 @@ describe('保存と復元', () => {
       numbering: 'yes',
       numberFrom: -1,
       numberStyle: 'roman',
+      labelText: 'AB',
     });
     expect(s.board.size).toBe(19);
     expect(s.colorMode).toBe('black');
@@ -113,6 +115,7 @@ describe('保存と復元', () => {
     expect(s.numbering).toBe(false);
     expect(s.numberFrom).toBe(0);
     expect(s.numberStyle).toBe('relative');
+    expect(s.labelText).toBe('A');
   });
 
   it('着手の記録が壊れていたら空にする', () => {

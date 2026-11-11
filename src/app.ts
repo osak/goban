@@ -19,6 +19,7 @@ import {
   sortedEntries,
   type BoardEntry,
 } from './library';
+import { pickLabelText, sameLabels } from './labels';
 import { computeLayout, hitTest, hitTestClamped, hitsAlongSegment, type Layout } from './layout';
 import { NUMBER_STYLES, movesOnBoard, stoneNumbers, withoutLastMoveAt, type Move } from './moves';
 import { getStorage, loadState, saveState } from './persistence';
@@ -45,14 +46,15 @@ interface Snapshot {
   readonly moves: readonly Move[];
   readonly marks: ReadonlySet<number>;
   readonly captured: ReadonlySet<number>;
+  readonly labels: ReadonlyMap<number, string>;
 }
 
 /** 石を置く／消す操作（タップまたはドラッグ）の途中経過 */
 interface Stroke {
   readonly pointerId: number;
   readonly before: Snapshot;
-  /** 石を置く / 石を消す / △を付ける / △を外す */
-  readonly action: 'place' | 'erase' | 'mark' | 'unmark';
+  /** 石を置く / 石を消す / △を付ける / △を外す / 文字を書く・消す */
+  readonly action: 'place' | 'erase' | 'mark' | 'unmark' | 'label';
   readonly color: StoneColor;
   /** ドラッグで続けて置ける／消せるか（同色連打と△の付け外しのとき） */
   readonly drag: boolean;
@@ -132,6 +134,7 @@ export class GobanApp {
     nextColor: byId('nextColor', HTMLButtonElement),
     nextColorIcon: byId('nextColorIcon', HTMLElement),
     nextColorText: byId('nextColorText', HTMLElement),
+    labelText: byId('labelText', HTMLInputElement),
     zoomHint: byId('zoomHint', HTMLElement),
     moveLog: byId('moveLog', HTMLElement),
     moveLogStatus: byId('moveLogStatus', HTMLElement),
@@ -199,6 +202,7 @@ export class GobanApp {
       coordStyle,
       marks: this.marks(),
       numbers: this.numbers(),
+      labels: this.state.labels,
       ghost,
       selection: this.selection,
       scale: this.scale,
@@ -242,7 +246,7 @@ export class GobanApp {
   // ---------------------------------------------------------------------------
 
   private snapshot(): Snapshot {
-    const { board, nextColor, moves, marks, captured } = this.state;
+    const { board, nextColor, moves, marks, captured, labels } = this.state;
     return {
       size: board.size,
       grid: board.grid.slice(),
@@ -250,6 +254,7 @@ export class GobanApp {
       moves: moves.slice(),
       marks: new Set(marks),
       captured: new Set(captured),
+      labels: new Map(labels),
     };
   }
 
@@ -267,6 +272,7 @@ export class GobanApp {
     this.state.moves = snap.moves.slice();
     this.state.marks = new Set(snap.marks);
     this.state.captured = new Set(snap.captured);
+    this.state.labels = new Map(snap.labels);
     this.syncCaptured(); // 記録したあとにモードを切り替えていることがある
     this.changed();
   }
@@ -523,25 +529,32 @@ export class GobanApp {
     const board = state.board;
     const i = board.index(p.x, p.y);
     const marking = state.tool === 'mark';
+    const labeling = state.tool === 'label';
     if (marking && board.grid[i] === EMPTY) return; // △は石にだけ付ける
     const stroke: Stroke = {
       pointerId: e.pointerId,
       before: this.snapshot(),
-      action: marking
-        ? state.marks.has(i)
-          ? 'unmark'
-          : 'mark'
-        : board.grid[i] === EMPTY
-          ? 'place'
-          : 'erase',
+      action: labeling
+        ? 'label'
+        : marking
+          ? state.marks.has(i)
+            ? 'unmark'
+            : 'mark'
+          : board.grid[i] === EMPTY
+            ? 'place'
+            : 'erase',
       color: currentColor(state),
-      drag: marking || state.colorMode !== 'alternate',
+      drag: marking || (!labeling && state.colorMode !== 'alternate'),
       last: pt,
       visited: new Set([i]),
     };
     this.stroke = stroke;
 
-    if (stroke.action === 'mark') {
+    if (stroke.action === 'label') {
+      // 同じ文字があればタップで消し、違う文字（またはなし）なら書く。書く文字が空ならタップで消す
+      if (state.labelText === '' || state.labels.get(i) === state.labelText) state.labels.delete(i);
+      else state.labels.set(i, state.labelText);
+    } else if (stroke.action === 'mark') {
       state.marks.add(i);
     } else if (stroke.action === 'unmark') {
       state.marks.delete(i);
@@ -684,9 +697,14 @@ export class GobanApp {
     if (!stroke) return;
     this.stroke = null;
     this.pruneMarks();
-    const { board, moves, marks } = this.state;
+    const { board, moves, marks, labels } = this.state;
     const sameMarks = marks.size === stroke.before.marks.size && [...marks].every((i) => stroke.before.marks.has(i));
-    if (sameGrid(stroke.before.grid, board.grid) && stroke.before.moves.length === moves.length && sameMarks) {
+    if (
+      sameGrid(stroke.before.grid, board.grid) &&
+      stroke.before.moves.length === moves.length &&
+      sameMarks &&
+      sameLabels(stroke.before.labels, labels)
+    ) {
       this.state.nextColor = stroke.before.nextColor;
     } else {
       this.history.record(stroke.before);
@@ -737,11 +755,13 @@ export class GobanApp {
   }
 
   private clearBoard(): void {
-    const { board, moves } = this.state;
-    if (this.stroke || (board.isEmpty() && moves.length === 0)) return;
-    const message = board.isEmpty()
-      ? '着手のログを消しますか？\n（「元に戻す」で復元できます）'
-      : '盤面の石をすべて消しますか？\n（「元に戻す」で復元できます）';
+    const { board, moves, labels } = this.state;
+    if (this.stroke || (board.isEmpty() && moves.length === 0 && labels.size === 0)) return;
+    const message = !board.isEmpty()
+      ? '盤面の石と文字をすべて消しますか？\n（「元に戻す」で復元できます）'
+      : moves.length === 0
+        ? '盤面の文字をすべて消しますか？\n（「元に戻す」で復元できます）'
+        : '着手のログと盤面の文字を消しますか？\n（「元に戻す」で復元できます）';
     if (!window.confirm(message)) return;
     this.history.record(this.snapshot());
     board.clear();
@@ -751,12 +771,13 @@ export class GobanApp {
     this.changed();
   }
 
-  /** 盤面を新しくしたときに着手の記録と番号の起点を消す */
+  /** 盤面を新しくしたときに着手の記録・番号の起点・△・文字を消す */
   private resetMoves(): void {
     this.state.moves = [];
     this.state.numberFrom = 0;
     this.state.marks = new Set();
     this.state.captured = new Set();
+    this.state.labels = new Map();
   }
 
   private async exportPng(): Promise<void> {
@@ -768,6 +789,7 @@ export class GobanApp {
       coordStyle,
       marks: this.marks(),
       numbers: this.numbers(),
+      labels: this.state.labels,
     });
     if (!blob) {
       this.toast('PNG の作成に失敗しました');
@@ -808,14 +830,14 @@ export class GobanApp {
       this.requestRender();
     };
 
-    // 「置く石」は黒・白・交互に加えて△（石に△を付け外しする）を選べる
+    // 「置くもの」は黒・白・交互に加えて△（石に△を付け外しする）と文字（交点に 1 文字を書く）を選べる
     this.bindSegment(
       'colorMode',
-      [...COLOR_MODES, 'mark'] as const,
-      () => (state.tool === 'mark' ? 'mark' : state.colorMode),
+      [...COLOR_MODES, 'mark', 'label'] as const,
+      () => (state.tool === 'mark' || state.tool === 'label' ? state.tool : state.colorMode),
       (v) => {
-        if (v === 'mark') {
-          this.setTool('mark');
+        if (v === 'mark' || v === 'label') {
+          this.setTool(v);
         } else {
           state.colorMode = v;
           this.setTool('stone');
@@ -855,6 +877,21 @@ export class GobanApp {
     this.bindSegment('theme', THEME_NAMES, () => state.theme, (v) => {
       state.theme = v;
       settingChanged();
+    });
+
+    // 書く文字は 1 文字だけ。入力したら最後に入力した文字に置き換える（変換中は待つ）
+    const applyLabelText = () => {
+      state.labelText = pickLabelText(ui.labelText.value);
+      ui.labelText.value = state.labelText;
+      saveState(this.storage, state);
+    };
+    ui.labelText.addEventListener('input', (e) => {
+      if (!(e instanceof InputEvent && e.isComposing)) applyLabelText();
+    });
+    ui.labelText.addEventListener('compositionend', applyLabelText);
+    ui.labelText.addEventListener('focus', () => ui.labelText.select());
+    ui.labelText.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.isComposing) ui.labelText.blur();
     });
 
     ui.nextColor.addEventListener('click', () => {
@@ -915,7 +952,9 @@ export class GobanApp {
     const { state, ui } = this;
     for (const update of this.segmentUpdaters) update();
     const black = state.nextColor === BLACK;
-    ui.nextColor.hidden = state.colorMode !== 'alternate' || state.tool === 'mark';
+    ui.nextColor.hidden = state.colorMode !== 'alternate' || state.tool === 'mark' || state.tool === 'label';
+    ui.labelText.hidden = state.tool !== 'label';
+    if (document.activeElement !== ui.labelText) ui.labelText.value = state.labelText;
     ui.nextColorIcon.className = `stone-icon ${black ? 'black' : 'white'}`;
     ui.nextColorText.textContent = black ? '黒' : '白';
     ui.undo.disabled = !this.history.canUndo;
