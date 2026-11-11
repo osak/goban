@@ -42,8 +42,18 @@ describe('盤面の一覧', () => {
     s.nextColor = WHITE;
     s.view = { x0: 0, y0: 0, x1: 6, y1: 6 };
     s.marks = new Set([s.board.index(9, 9)]);
+    s.captured = new Set([s.board.index(3, 3)]);
     const e = entryFromState(s, base, 200);
-    expect(e).toMatchObject({ id: 'a', name: '盤面 1', createdAt: 100, updatedAt: 200, size: 13, moves: 'BddWjj', marks: 'jj' });
+    expect(e).toMatchObject({
+      id: 'a',
+      name: '盤面 1',
+      createdAt: 100,
+      updatedAt: 200,
+      size: 13,
+      moves: 'BddWjj',
+      marks: 'jj',
+      captured: 'dd',
+    });
 
     const t = initialState();
     applyEntry(t, e);
@@ -53,6 +63,7 @@ describe('盤面の一覧', () => {
     expect(t.nextColor).toBe(WHITE);
     expect(t.view).toEqual(s.view);
     expect(t.marks).toEqual(s.marks);
+    expect(t.captured).toEqual(s.captured);
   });
 
   it('石も着手の記録も変わらなければ更新時刻を変えない', () => {
@@ -63,6 +74,8 @@ describe('盤面の一覧', () => {
     s.marks.add(0); // △を付けるのは盤面の編集
     expect(entryFromState(s, e, 300).updatedAt).toBe(300);
     s.marks.clear();
+    s.captured.add(0); // 取られた石はモードの切り替えでも変わるので編集とみなさない
+    expect(entryFromState(s, e, 300).updatedAt).toBe(200);
     s.board.place(0, 0, BLACK, 'remove');
     expect(entryFromState(s, e, 300).updatedAt).toBe(300);
   });
@@ -116,6 +129,7 @@ describe('盤面の一覧の保存', () => {
           name: '  ',
           moves: 'Bzz',
           marks: 'zz',
+          captured: 'zz',
           numberFrom: -3,
           nextColor: 5,
           view: { x0: 0, y0: 0, x1: 99, y1: 99 },
@@ -129,11 +143,21 @@ describe('盤面の一覧の保存', () => {
       name: '無題',
       moves: '',
       marks: '',
+      captured: '',
       numberFrom: 0,
       nextColor: BLACK,
       view: fullView(9),
       updatedAt: ok.createdAt,
     });
+  });
+
+  it('以前の版の保存データ（取られた石がない）も読み込める', () => {
+    const { captured: _, ...old } = emptyEntry('盤面 1', 9);
+    const lib = parseLibrary({ currentId: old.id, entries: [old] });
+    expect(lib?.entries[0].captured).toBe('');
+    const t = initialState();
+    applyEntry(t, { ...old });
+    expect(t.captured.size).toBe(0);
   });
 
   it('壊れたデータや空の一覧は null', () => {

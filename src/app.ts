@@ -2,7 +2,8 @@
  * 碁盤アプリの UI。ポインタ操作・元に戻す・拡大・PNG 出力・保存をつなぐ。
  */
 
-import { BLACK, Board, CAPTURE_MODES, EMPTY, opposite, type StoneColor } from './board';
+import { BLACK, Board, CAPTURE_MODES, EMPTY, opposite, type PlaceResult, type StoneColor } from './board';
+import { eraseCapturing, placeCapturing, settleCaptured } from './capture';
 import { COORD_STYLES, pointName } from './coords';
 import { downloadBlob, exportFileName, renderPng } from './export';
 import { UndoHistory } from './history';
@@ -43,6 +44,7 @@ interface Snapshot {
   readonly nextColor: StoneColor;
   readonly moves: readonly Move[];
   readonly marks: ReadonlySet<number>;
+  readonly captured: ReadonlySet<number>;
 }
 
 /** 石を置く／消す操作（タップまたはドラッグ）の途中経過 */
@@ -157,6 +159,7 @@ export class GobanApp {
   start(): void {
     loadState(this.storage, this.state);
     this.loadEntries();
+    this.syncCaptured();
     this.bindPointer();
     this.bindPanel();
     this.bindKeyboard();
@@ -202,10 +205,10 @@ export class GobanApp {
     });
   }
 
-  /** △を付ける石: 手で付けたもの（石があるところだけ）と、「△マーク」モードの囲まれた石 */
+  /** △を付ける石: 手で付けたもの（石があるところだけ）と、「△マーク」モードの取られた石 */
   private marks(): Set<number> {
     const { board, captureMode } = this.state;
-    const out = captureMode === 'mark' ? board.deadStones() : new Set<number>();
+    const out = captureMode === 'mark' ? new Set(this.state.captured) : new Set<number>();
     for (const i of this.state.marks) if (board.grid[i] !== EMPTY) out.add(i);
     return out;
   }
@@ -239,8 +242,15 @@ export class GobanApp {
   // ---------------------------------------------------------------------------
 
   private snapshot(): Snapshot {
-    const { board, nextColor, moves, marks } = this.state;
-    return { size: board.size, grid: board.grid.slice(), nextColor, moves: moves.slice(), marks: new Set(marks) };
+    const { board, nextColor, moves, marks, captured } = this.state;
+    return {
+      size: board.size,
+      grid: board.grid.slice(),
+      nextColor,
+      moves: moves.slice(),
+      marks: new Set(marks),
+      captured: new Set(captured),
+    };
   }
 
   private applySnapshot(snap: Snapshot): void {
@@ -256,6 +266,8 @@ export class GobanApp {
     this.state.nextColor = snap.nextColor;
     this.state.moves = snap.moves.slice();
     this.state.marks = new Set(snap.marks);
+    this.state.captured = new Set(snap.captured);
+    this.syncCaptured(); // 記録したあとにモードを切り替えていることがある
     this.changed();
   }
 
@@ -337,6 +349,7 @@ export class GobanApp {
     this.syncCurrentEntry();
     this.currentId = id;
     applyEntry(this.state, entry);
+    this.syncCaptured();
     this.hover = null;
     this.selection = null;
     this.relayout();
@@ -533,7 +546,7 @@ export class GobanApp {
     } else if (stroke.action === 'unmark') {
       state.marks.delete(i);
     } else if (stroke.action === 'place') {
-      const res = board.place(p.x, p.y, stroke.color, state.captureMode);
+      const res = this.placeStone(p.x, p.y, stroke.color);
       if (res.ok) {
         state.moves.push({ x: p.x, y: p.y, color: stroke.color });
         if (state.colorMode === 'alternate') state.nextColor = opposite(stroke.color);
@@ -583,7 +596,7 @@ export class GobanApp {
             else state.marks.delete(i);
             changed = true;
           } else if (stroke.action === 'place') {
-            if (board.grid[i] === EMPTY && board.place(p.x, p.y, stroke.color, state.captureMode).ok) {
+            if (board.grid[i] === EMPTY && this.placeStone(p.x, p.y, stroke.color).ok) {
               state.moves.push({ x: p.x, y: p.y, color: stroke.color });
               changed = true;
             }
@@ -628,18 +641,42 @@ export class GobanApp {
     if (this.stroke && e.pointerId === this.stroke.pointerId) this.finishStroke();
   }
 
+  /** 囲まれた石の扱いに合わせて石を置く */
+  private placeStone(x: number, y: number, color: StoneColor): PlaceResult {
+    const { board, captured, captureMode } = this.state;
+    return captureMode === 'mark'
+      ? placeCapturing(board, captured, x, y, color)
+      : board.place(x, y, color, captureMode);
+  }
+
   /**
    * 石を取り除き、取り除いた石の色を返す。
    * 最後に置いた石なら置き間違いの修正とみなして着手の記録からも消す。
    * それ以外の石は記録に残す（取られた石を手で取り除く場合など）。
+   * 「△マーク」モードで取られていない石を取り除いたら、それに囲まれていた取られた石は元に戻す。
    */
   private eraseStone(x: number, y: number): ReturnType<Board['remove']> {
-    const removed = this.state.board.remove(x, y);
+    const { board, captured } = this.state;
+    const i = board.index(x, y);
+    const wasCaptured = captured.has(i);
+    const removed = board.remove(x, y);
     if (removed !== EMPTY) {
       const moves = withoutLastMoveAt(this.state.moves, x, y, removed);
       if (moves) this.state.moves = moves;
+      if (this.state.captureMode === 'mark') eraseCapturing(board, captured, i, removed, wasCaptured);
     }
     return removed;
+  }
+
+  /**
+   * 取られた石を今のモードに合わせる。
+   * 「△マーク」モードでは盤面と食い違わないように整え（打った順が分からない石は呼吸点のない連をすべて取られた石にする）、
+   * ほかのモードでは空にする。
+   */
+  private syncCaptured(): void {
+    const { board, captured } = this.state;
+    if (this.state.captureMode === 'mark') settleCaptured(board, captured);
+    else captured.clear();
   }
 
   private finishStroke(): void {
@@ -719,6 +756,7 @@ export class GobanApp {
     this.state.moves = [];
     this.state.numberFrom = 0;
     this.state.marks = new Set();
+    this.state.captured = new Set();
   }
 
   private async exportPng(): Promise<void> {
@@ -786,7 +824,11 @@ export class GobanApp {
       },
     );
     this.bindSegment('captureMode', CAPTURE_MODES, () => state.captureMode, (v) => {
+      if (this.stroke || v === state.captureMode) return;
       state.captureMode = v;
+      // 「△マーク」に切り替えた時点では打った順が分からないので、呼吸点のない連をすべて取られた石にする
+      state.captured.clear();
+      this.syncCaptured();
       settingChanged();
     });
     this.bindSegment('numbering', ['off', 'on'] as const, () => (state.numbering ? 'on' : 'off'), (v) => {
