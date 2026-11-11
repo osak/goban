@@ -1,12 +1,13 @@
 /**
  * 保存した盤面の一覧（盤面ライブラリ）。DOM に依存しない。
  *
- * 盤面ごとに石の配置・着手の記録・番号の起点・手番・表示範囲を持つ。
+ * 盤面ごとに石の配置・着手の記録・△・文字・番号の起点・手番・表示範囲を持つ。
  * 置く石の色や座標の表記などの設定は盤面によらず共通で、persistence.ts 側で保存する。
  * 保存データは外部入力として扱い、読み込み時に項目ごとに検証する。
  */
 
 import { BLACK, Board, WHITE, type StoneColor } from './board';
+import { deserializeLabels, sameLabels, serializeLabels } from './labels';
 import { deserializeMoves, deserializePoints, serializeMoves, serializePoints } from './moves';
 import type { KeyValueStorage } from './persistence';
 import { BOARD_SIZES, type AppState } from './state';
@@ -30,6 +31,8 @@ export interface BoardEntry {
   readonly marks: string;
   /** 「△マーク」モードで取られた石。serializePoints() の文字列（以前の版の保存データにはない） */
   readonly captured?: string;
+  /** 交点に書いた文字。serializeLabels() の形式（以前の版の保存データにはない） */
+  readonly labels?: Readonly<Record<string, string>>;
   readonly numberFrom: number;
   readonly nextColor: StoneColor;
   readonly view: View;
@@ -66,7 +69,7 @@ export function cleanName(name: string, fallback: string): string {
  * 石や着手の記録が base から変わっていなければ更新時刻も引き継ぐ。
  */
 export function entryFromState(
-  state: Pick<AppState, 'board' | 'moves' | 'numberFrom' | 'nextColor' | 'view' | 'marks' | 'captured'>,
+  state: Pick<AppState, 'board' | 'moves' | 'numberFrom' | 'nextColor' | 'view' | 'marks' | 'captured' | 'labels'>,
   base: Pick<BoardEntry, 'id' | 'name' | 'createdAt'> & Partial<BoardEntry>,
   now = Date.now(),
 ): BoardEntry {
@@ -74,8 +77,14 @@ export function entryFromState(
   const stones = state.board.serialize();
   const moves = serializeMoves(state.moves);
   const marks = serializePoints(state.marks, size);
+  const labels = serializeLabels(state.labels, size);
   // 取られた石はモードの切り替えでも変わるので、更新時刻の判定には使わない（石を置いたり消したりしたときは stones が変わる）
-  const same = base.size === size && base.stones === stones && base.moves === moves && base.marks === marks;
+  const same =
+    base.size === size &&
+    base.stones === stones &&
+    base.moves === moves &&
+    base.marks === marks &&
+    sameLabels(deserializeLabels(size, base.labels ?? {}) ?? new Map(), state.labels);
   return {
     id: base.id,
     name: base.name,
@@ -86,6 +95,7 @@ export function entryFromState(
     moves,
     marks,
     captured: serializePoints(state.captured, size),
+    labels,
     numberFrom: state.numberFrom,
     nextColor: state.nextColor,
     view: state.view,
@@ -94,7 +104,7 @@ export function entryFromState(
 
 /** entry の盤面の内容を state に反映する */
 export function applyEntry(
-  state: Pick<AppState, 'board' | 'moves' | 'numberFrom' | 'nextColor' | 'view' | 'marks' | 'captured'>,
+  state: Pick<AppState, 'board' | 'moves' | 'numberFrom' | 'nextColor' | 'view' | 'marks' | 'captured' | 'labels'>,
   entry: BoardEntry,
 ): void {
   const board = Board.deserialize(entry.size, entry.stones) ?? new Board(19);
@@ -103,6 +113,7 @@ export function applyEntry(
   state.marks = deserializePoints(board.size, entry.marks) ?? new Set();
   // 盤面と食い違っていても、読み込んだあとに今のモードに合わせて整える（GobanApp.syncCaptured）
   state.captured = deserializePoints(board.size, entry.captured) ?? new Set();
+  state.labels = deserializeLabels(board.size, entry.labels ?? {}) ?? new Map();
   state.numberFrom = entry.numberFrom;
   state.nextColor = entry.nextColor;
   state.view = normalizeView(entry.view, board.size);
@@ -120,6 +131,7 @@ export function emptyEntry(name: string, size: number, now = Date.now()): BoardE
     moves: '',
     marks: '',
     captured: '',
+    labels: {},
     numberFrom: 0,
     nextColor: BLACK,
     view: fullView(size),
@@ -150,6 +162,7 @@ export function parseEntry(data: unknown): BoardEntry | null {
     moves: deserializeMoves(d.size, d.moves) ? (d.moves as string) : '',
     marks: points(d.marks),
     captured: points(d.captured),
+    labels: serializeLabels(deserializeLabels(board.size, d.labels) ?? new Map(), board.size),
     numberFrom: typeof d.numberFrom === 'number' && Number.isInteger(d.numberFrom) && d.numberFrom >= 0 ? d.numberFrom : 0,
     nextColor: d.nextColor === WHITE ? WHITE : BLACK,
     view: normalizeView(isView(d.view) ? d.view : null, d.size),

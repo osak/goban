@@ -25,7 +25,9 @@
           <button type="button" data-value="white"><span class="stone-icon white"></span>白</button>
           <button type="button" data-value="alternate"><span class="stone-icon half"></span>交互</button>
           <button type="button" data-value="mark" title="石をタップして△を付ける・外す"><span class="mark-icon" aria-hidden="true">△</span>印</button>
+          <button type="button" data-value="label" title="交点をタップして文字を書く・消す"><span class="mark-icon" aria-hidden="true">A</span>文字</button>
         </div>
+        <input type="text" class="text-input label-input" id="labelText" hidden autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" aria-label="交点に書く文字（1 文字）" title="交点に書く文字（1 文字）。空にするとタップで文字を消します" placeholder="消す">
         <button type="button" class="chip" id="nextColor" hidden title="次の手番を入れ替える">
           次: <span class="stone-icon black" id="nextColorIcon"></span><span id="nextColorText">黒</span>
         </button>
@@ -133,7 +135,7 @@
           <button type="button" class="btn danger" id="clearBoard">盤面をクリア</button>
         </div>
         <p class="help">
-          石のない交点をタップで石を置き、石をタップで取り除きます。「印」を選ぶと、石をタップして△を付けたり外したりできます（ドラッグで続けて付け外しできます）。黒・白の連打中はドラッグで続けて置けます（石の上から始めると続けて消せます）。
+          石のない交点をタップで石を置き、石をタップで取り除きます。「印」を選ぶと、石をタップして△を付けたり外したりできます（ドラッグで続けて付け外しできます）。「文字」を選ぶと、入力欄の 1 文字を石や空いている交点に書けます（同じ文字をもう一度タップで消えます）。黒・白の連打中はドラッグで続けて置けます（石の上から始めると続けて消せます）。
           PNG は表示中の範囲を座標付きで保存します。
           「着手番号」を表示にすると、石を置いた順の番号を石に表示します（ログの手をタップするとその手から番号を付けます）。
         </p>

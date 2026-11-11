@@ -6,7 +6,7 @@ import { computeLayout } from './layout';
 import { draw, type DrawParams } from './renderer';
 import type { View } from './view';
 
-export type ExportParams = Pick<DrawParams, 'board' | 'view' | 'theme' | 'coordStyle' | 'marks' | 'numbers'>;
+export type ExportParams = Pick<DrawParams, 'board' | 'view' | 'theme' | 'coordStyle' | 'marks' | 'numbers' | 'labels'>;
 
 /** 出力画像のマスの大きさ。表示範囲が狭いほど大きくし、長辺がおよそ 1000px 前後になるようにする */
 export function exportCellSize(view: View): number {

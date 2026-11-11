@@ -14,8 +14,8 @@ export const COLOR_MODES: readonly ColorMode[] = ['black', 'white', 'alternate']
 
 export const BOARD_SIZES: readonly number[] = [19, 13, 9];
 
-/** 盤面タップの役割: 石を置く / 石に△を付け外しする / 拡大範囲を選ぶ */
-export type Tool = 'stone' | 'mark' | 'zoom';
+/** 盤面タップの役割: 石を置く / 石に△を付け外しする / 交点に文字を書く・消す / 拡大範囲を選ぶ */
+export type Tool = 'stone' | 'mark' | 'label' | 'zoom';
 
 export interface AppState {
   board: Board;
@@ -41,6 +41,10 @@ export interface AppState {
    * ほかのモードでは空
    */
   captured: Set<number>;
+  /** 交点に書いた 1 文字（キーは交点のインデックス）。石の上にも空点にも書ける */
+  labels: Map<number, string>;
+  /** 「文字」で交点に書く文字（'' ならタップで文字を消す） */
+  labelText: string;
 }
 
 export function initialState(size = 19): AppState {
@@ -59,6 +63,8 @@ export function initialState(size = 19): AppState {
     numberStyle: 'relative',
     marks: new Set(),
     captured: new Set(),
+    labels: new Map(),
+    labelText: 'A',
   };
 }
 
