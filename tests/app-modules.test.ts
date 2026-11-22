@@ -157,6 +157,7 @@ describe('PNG 出力', () => {
     expect(exportFileName(new Date(2026, 0, 2, 3, 4, 5))).toBe('goban-20260102-030405.png');
     expect(exportFileName(new Date(2026, 0, 2, 3, 4, 5), ' 定石/小目 その1 ')).toBe('goban-定石_小目_その1-20260102-030405.png');
     expect(exportFileName(new Date(2026, 0, 2, 3, 4, 5), '...')).toBe('goban-20260102-030405.png');
+    expect(exportFileName(new Date(2026, 0, 2, 3, 4, 5), '詰碁', 'sgf')).toBe('goban-詰碁-20260102-030405.sgf');
   });
 
   it('表示範囲が狭いほどマスを大きくする（上限・下限あり）', () => {
