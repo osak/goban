@@ -1,5 +1,5 @@
 /**
- * 碁盤アプリの UI。ポインタ操作・元に戻す・拡大・PNG 出力・保存をつなぐ。
+ * 碁盤アプリの UI。ポインタ操作・元に戻す・拡大・PNG / SGF 出力・保存をつなぐ。
  */
 
 import { BLACK, Board, CAPTURE_MODES, EMPTY, opposite, type PlaceResult, type StoneColor } from './board';
@@ -24,6 +24,7 @@ import { computeLayout, hitTest, hitTestClamped, hitsAlongSegment, type Layout }
 import { NUMBER_STYLES, movesOnBoard, stoneNumbers, withoutLastMoveAt, type Move } from './moves';
 import { getStorage, loadState, saveState } from './persistence';
 import { THEME_NAMES, draw, drawThumbnail } from './renderer';
+import { toSgf } from './sgf';
 import { BOARD_SIZES, COLOR_MODES, currentColor, initialState, type AppState, type Tool } from './state';
 import { fullView, isFullView, normalizeView, viewAround, viewFromPoints, type Point, type View } from './view';
 
@@ -128,6 +129,7 @@ export class GobanApp {
     zoom: byId('zoomBtn', HTMLButtonElement),
     resetZoom: byId('resetZoom', HTMLButtonElement),
     exportPng: byId('exportPng', HTMLButtonElement),
+    exportSgf: byId('exportSgf', HTMLButtonElement),
     settingsToggle: byId('settingsBtn', HTMLButtonElement),
     settings: byId('settings', HTMLElement),
     clear: byId('clearBoard', HTMLButtonElement),
@@ -799,6 +801,23 @@ export class GobanApp {
     this.toast('PNG を保存しました');
   }
 
+  private exportSgf(): void {
+    const { board, moves, captured, labels, view, colorMode, nextColor } = this.state;
+    const name = this.currentEntry?.name;
+    const sgf = toSgf({
+      board,
+      moves,
+      marks: this.marks(),
+      captured: this.state.captureMode === 'mark' ? captured : new Set(),
+      labels,
+      view,
+      name,
+      nextColor: colorMode === 'alternate' ? nextColor : null,
+    });
+    downloadBlob(new Blob([sgf], { type: 'application/x-go-sgf' }), exportFileName(new Date(), name, 'sgf'));
+    this.toast('SGF を保存しました');
+  }
+
   // ---------------------------------------------------------------------------
   // パネル
   // ---------------------------------------------------------------------------
@@ -903,6 +922,7 @@ export class GobanApp {
     ui.zoom.addEventListener('click', () => this.setTool(state.tool === 'zoom' ? this.toolBeforeZoom : 'zoom'));
     ui.resetZoom.addEventListener('click', () => this.setView(fullView(state.board.size)));
     ui.exportPng.addEventListener('click', () => void this.exportPng());
+    ui.exportSgf.addEventListener('click', () => this.exportSgf());
     ui.clear.addEventListener('click', () => this.clearBoard());
     ui.boardsToggle.addEventListener('click', () => {
       ui.boards.hidden = !ui.boards.hidden;

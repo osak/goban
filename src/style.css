@@ -148,6 +148,10 @@ button {
   .panel .chip {
     align-self: flex-start;
   }
+  /* パネルの幅では 8 個並べると窮屈なので 2 段にする */
+  .panel .toolbar {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
   .panel .text-input {
     flex: 0 0 auto;
   }
@@ -281,7 +285,7 @@ button {
 
 .toolbar {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   gap: 6px;
 }
 
