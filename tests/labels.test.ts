@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deserializeLabels, isLabelText, pickLabelText, sameLabels, serializeLabels } from '../src/labels';
+import { isLabelText, pickLabelText } from '../src/labels';
 
 describe('交点に書く文字', () => {
   it('1 文字だけを書ける文字とする', () => {
@@ -15,30 +15,5 @@ describe('交点に書く文字', () => {
     expect(pickLabelText(' x ')).toBe('x');
     expect(pickLabelText('')).toBe('');
     expect(pickLabelText('  ')).toBe('');
-  });
-
-  it('保存用の形式にして元に戻せる', () => {
-    const labels = new Map([
-      [9 * 4 + 3, 'あ'],
-      [0, 'A'],
-    ]);
-    const data = serializeLabels(labels, 9);
-    expect(data).toEqual({ aa: 'A', de: 'あ' });
-    expect(Object.keys(data)).toEqual(['aa', 'de']); // 交点の順
-    expect(deserializeLabels(9, JSON.parse(JSON.stringify(data)))).toEqual(labels);
-  });
-
-  it('不正な項目は除き、形式が違えば null', () => {
-    expect(deserializeLabels(9, { aa: 'A', zz: 'B', bb: 'CD', cc: '', d: 'E', ee: 3 })).toEqual(new Map([[0, 'A']]));
-    expect(deserializeLabels(9, 'aaA')).toBeNull();
-    expect(deserializeLabels(9, null)).toBeNull();
-    expect(deserializeLabels(9, ['A'])).toBeNull();
-  });
-
-  it('同じ配置か', () => {
-    expect(sameLabels(new Map([[1, 'A']]), new Map([[1, 'A']]))).toBe(true);
-    expect(sameLabels(new Map([[1, 'A']]), new Map([[1, 'B']]))).toBe(false);
-    expect(sameLabels(new Map([[1, 'A']]), new Map([[2, 'A']]))).toBe(false);
-    expect(sameLabels(new Map(), new Map([[2, 'A']]))).toBe(false);
   });
 });

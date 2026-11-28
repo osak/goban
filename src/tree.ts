@@ -138,6 +138,17 @@ export function removeAt(root: SgfNode, path: NodePath): SgfNode {
   });
 }
 
+/** path のノードを抜き、その子をそのノードの位置に入れた新しい根。根は抜けない */
+export function spliceOut(root: SgfNode, path: NodePath): SgfNode {
+  if (path.length === 0) throw new RangeError('cannot splice out the root');
+  const k = path[path.length - 1];
+  return updateAt(root, path.slice(0, -1), (n) => {
+    const target = n.children[k];
+    if (!target) throw new RangeError(`invalid path: ${path.join(',')}`);
+    return withChildren(n, [...n.children.slice(0, k), ...target.children, ...n.children.slice(k + 1)]);
+  });
+}
+
 /** parentPath のノードの子の順番を変える（from 番目の子を to 番目へ）。to = 0 で本線にする */
 export function moveChild(root: SgfNode, parentPath: NodePath, from: number, to: number): SgfNode {
   return updateAt(root, parentPath, (n) => {

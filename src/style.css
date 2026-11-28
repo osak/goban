@@ -366,6 +366,11 @@ button {
   gap: 6px;
 }
 
+/* 「SGF を開く」は 2 行目に横いっぱいで置く */
+.boards-actions #openSgf {
+  grid-column: 1 / -1;
+}
+
 .board-list {
   display: flex;
   flex-direction: column;
