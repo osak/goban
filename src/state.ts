@@ -35,6 +35,12 @@ export interface Settings {
   inheritMarks: boolean;
   /** 次の手の候補の表示 */
   candidates: CandidateMode;
+  /** 「配置」モード: 石を手ではなく今のノードの配置（AB / AW / AE）として置く・消す */
+  setupMode: boolean;
+  /** ツリー全体の表示を開いているか */
+  showTree: boolean;
+  /** コメントの欄を開いているか */
+  showComment: boolean;
 }
 
 export interface AppState extends Settings {
@@ -52,6 +58,9 @@ export function initialSettings(): Settings {
     labelText: 'A',
     inheritMarks: true,
     candidates: 'branch',
+    setupMode: false,
+    showTree: false,
+    showComment: false,
   };
 }
 

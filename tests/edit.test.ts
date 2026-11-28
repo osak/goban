@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BLACK, EMPTY, WHITE, type CaptureMode, type StoneColor } from '../src/board';
 import {
+  commentAt,
   cursorNode,
   docName,
   docNodes,
@@ -12,7 +13,9 @@ import {
   placeStone,
   renameDoc,
   resetDoc,
+  setComment,
   setLabel,
+  setSetupPoint,
   isNumberStartHere,
   setNumberStartHere,
   setTriangle,
@@ -45,6 +48,12 @@ class Session {
 
   erase(x: number, y: number, alternate = false) {
     const doc = eraseStone(this.doc, this.pos, at(x, y), alternate, { inheritMarks: this.inheritMarks });
+    if (doc) this.doc = doc;
+    return doc;
+  }
+
+  setup(x: number, y: number, value: StoneColor | typeof EMPTY) {
+    const doc = setSetupPoint(this.doc, this.pos, at(x, y), value, { inheritMarks: this.inheritMarks });
     if (doc) this.doc = doc;
     return doc;
   }
@@ -333,5 +342,73 @@ describe('印・文字・番号の起点・手番・名前', () => {
     s.doc = setLabel(s.doc, 0, 'A');
     expect(hasContent(s.doc, s.position)).toBe(true);
     expect(s.position.board.grid[0]).toBe(EMPTY);
+  });
+});
+
+describe('配置', () => {
+  it('配置ノード（根）は、子があってもその場で直し、その先の局面も変わる', () => {
+    const s = new Session();
+    s.place(2, 2, WHITE);
+    s.doc = { ...s.doc, cursor: [] };
+    s.setup(0, 0, BLACK);
+    s.setup(1, 0, WHITE);
+    expect(s.doc.cursor).toEqual([]);
+    expect(getValue(s.doc.root, 'AB')).toBe('aa');
+    expect(getValue(s.doc.root, 'AW')).toBe('ba');
+    expect(s.doc.root.children).toHaveLength(1);
+    s.doc = { ...s.doc, cursor: [0] };
+    expect(s.rows()).toEqual(['XO...', '.....', '..O..', '.....', '.....']);
+  });
+
+  it('同じ状態なら何もしない。色を変える・消すと、余計な点を残さない', () => {
+    const s = new Session();
+    s.setup(0, 0, BLACK);
+    expect(s.setup(0, 0, BLACK)).toBeNull();
+    s.setup(0, 0, WHITE);
+    expect(getValue(s.doc.root, 'AB')).toBeUndefined();
+    expect(getValue(s.doc.root, 'AW')).toBe('aa');
+    s.setup(0, 0, EMPTY);
+    expect([...s.doc.root.props.keys()].filter((k) => /^A[BWE]$/.test(k))).toEqual([]);
+    expect(s.setup(1, 1, EMPTY)).toBeNull();
+  });
+
+  it('着手ノードでは子の配置ノードを作り、続けるとそのノードを直す。親の石を消すのは AE', () => {
+    const s = new Session();
+    s.place(0, 0, BLACK);
+    s.setup(1, 1, WHITE);
+    expect(s.doc.cursor).toEqual([0, 0]);
+    s.setup(0, 0, EMPTY);
+    s.setup(2, 2, BLACK);
+    expect(s.doc.cursor).toEqual([0, 0]);
+    expect(s.nodes()).toEqual([';B[aa]', ';AW[bb]AE[aa]AB[cc]']);
+    // 親の局面と同じに戻すと AE も外す
+    s.setup(0, 0, BLACK);
+    expect(s.nodes()).toEqual([';B[aa]', ';AW[bb]AB[cc]']);
+    // 配置では手番も番号も変わらない
+    expect(s.position.moves).toHaveLength(1);
+    expect(nextColorOf(s.doc, s.position)).toBe(WHITE);
+  });
+
+  it('配置で消した石の△は外す', () => {
+    const s = new Session();
+    s.setup(0, 0, BLACK);
+    s.doc = setTriangle(s.doc, at(0, 0), true);
+    s.setup(0, 0, EMPTY);
+    expect(trianglesAt(s.doc).size).toBe(0);
+  });
+});
+
+describe('コメント', () => {
+  it('今のノードの C を読み書きする。空白だけなら消す', () => {
+    const s = new Session();
+    s.place(1, 1, BLACK);
+    const text = '黒先\n[正解] は a:b';
+    s.doc = setComment(s.doc, text);
+    expect(commentAt(s.doc)).toBe(text);
+    expect(getValue(cursorNode(s.doc), 'C')).toBe('黒先\n[正解\\] は a\\:b');
+    expect(setComment(s.doc, text)).toBe(s.doc);
+    s.doc = setComment(s.doc, '  \n ');
+    expect(cursorNode(s.doc).props.has('C')).toBe(false);
+    expect(commentAt(s.doc)).toBe('');
   });
 });

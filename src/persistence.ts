@@ -42,6 +42,9 @@ export function applySettings(settings: Settings, data: unknown): void {
   if (d.labelText === '' || isLabelText(d.labelText)) settings.labelText = d.labelText;
   if (typeof d.inheritMarks === 'boolean') settings.inheritMarks = d.inheritMarks;
   if (oneOf(CANDIDATE_MODES, d.candidates)) settings.candidates = d.candidates;
+  if (typeof d.setupMode === 'boolean') settings.setupMode = d.setupMode;
+  if (typeof d.showTree === 'boolean') settings.showTree = d.showTree;
+  if (typeof d.showComment === 'boolean') settings.showComment = d.showComment;
 }
 
 export function toSavedSettings(s: Settings): Settings {
@@ -55,6 +58,9 @@ export function toSavedSettings(s: Settings): Settings {
     labelText: s.labelText,
     inheritMarks: s.inheritMarks,
     candidates: s.candidates,
+    setupMode: s.setupMode,
+    showTree: s.showTree,
+    showComment: s.showComment,
   };
 }
 

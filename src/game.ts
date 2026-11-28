@@ -180,7 +180,7 @@ export function playMove(board: Board, point: number, color: StoneColor): Array<
 }
 
 /** ノードの手（着手ノードでなければ null）。lastNumber は直前の手の手数 */
-function nodeMove(node: SgfNode, depth: number, size: number, lastNumber: number): GameMove | null {
+export function nodeMove(node: SgfNode, depth: number, size: number, lastNumber: number): GameMove | null {
   const m = moveOf(node, size);
   const cm = m ? null : capturelessMoveOf(node, size);
   const played = m ?? cm;

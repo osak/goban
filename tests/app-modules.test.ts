@@ -80,6 +80,9 @@ describe('設定の保存と復元', () => {
     s.labelText = 'あ';
     s.inheritMarks = false;
     s.candidates = 'all';
+    s.setupMode = true;
+    s.showTree = true;
+    s.showComment = true;
     saveSettings(storage, s);
     expect(storage.data.has(SETTINGS_KEY)).toBe(true);
 
@@ -100,6 +103,9 @@ describe('設定の保存と復元', () => {
       labelText: 'AB',
       inheritMarks: 0,
       candidates: 'some',
+      setupMode: 'on',
+      showTree: 1,
+      showComment: null,
     });
     expect(s).toEqual(initialSettings());
   });
