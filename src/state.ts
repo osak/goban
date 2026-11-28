@@ -14,6 +14,10 @@ export const COLOR_MODES: readonly ColorMode[] = ['black', 'white', 'alternate']
 /** 新しく作る盤面の大きさの選択肢（読み込んだ棋譜はこれ以外の大きさもありうる） */
 export const BOARD_SIZES: readonly number[] = [19, 13, 9];
 
+/** 次の手の候補を盤に出すか: 出さない / 変化（子が 2 つ以上）のときだけ / 次の手があればいつも */
+export type CandidateMode = 'off' | 'branch' | 'all';
+export const CANDIDATE_MODES: readonly CandidateMode[] = ['off', 'branch', 'all'];
+
 /** 盤面タップの役割: 石を置く / 石に△を付け外しする / 交点に文字を書く・消す / 拡大範囲を選ぶ */
 export type Tool = 'stone' | 'mark' | 'label' | 'zoom';
 
@@ -29,6 +33,8 @@ export interface Settings {
   labelText: string;
   /** 次の手を置くとき、今の △ と文字を引き継ぐか */
   inheritMarks: boolean;
+  /** 次の手の候補の表示 */
+  candidates: CandidateMode;
 }
 
 export interface AppState extends Settings {
@@ -45,6 +51,7 @@ export function initialSettings(): Settings {
     numberStyle: 'relative',
     labelText: 'A',
     inheritMarks: true,
+    candidates: 'branch',
   };
 }
 

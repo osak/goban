@@ -24,6 +24,9 @@ const THEMES: Record<ThemeName, Theme> = {
   print: { background: '#ffffff', line: '#000000', label: '#000000', star: '#000000', shaded: false },
 };
 
+/** 今の手順でたどる候補の枠の色 */
+const CANDIDATE_RING = '#2563eb';
+
 const FONT_FAMILY =
   '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", Meiryo, sans-serif';
 
@@ -39,12 +42,24 @@ export interface DrawParams {
   readonly numbers?: ReadonlyMap<number, number> | null;
   /** 交点に書く 1 文字（キーは交点のインデックス）。△や番号と重なってもそのまま上に書く */
   readonly labels?: ReadonlyMap<number, string> | null;
+  /** 次の手の候補（子の手の位置）。画面だけに出し、PNG には出さない */
+  readonly candidates?: readonly Candidate[] | null;
   /** 置く予定の石（半透明で表示） */
   readonly ghost?: (Point & { readonly color: StoneColor }) | null;
   /** 拡大範囲の選択中の矩形（対角の 2 交点） */
   readonly selection?: { readonly a: Point; readonly b: Point } | null;
   /** 1 CSS px あたりのデバイスピクセル数。ctx の変換行列はこの倍率に設定済みであること */
   readonly scale?: number;
+}
+
+/** 次の手の候補の印 */
+export interface Candidate {
+  readonly point: number;
+  readonly color: StoneColor;
+  /** 印に書く文字（A, B, …。候補が 1 つなら ''） */
+  readonly text: string;
+  /** 今の手順でたどる候補（「次の手」で進む先） */
+  readonly selected: boolean;
 }
 
 export function draw(ctx: CanvasRenderingContext2D, p: DrawParams): void {
@@ -172,6 +187,24 @@ export function draw(ctx: CanvasRenderingContext2D, p: DrawParams): void {
     } else {
       drawLabel(ctx, X(bx), Y(by), r, text, c === BLACK ? '#ffffff' : '#000000');
     }
+  }
+
+  // 次の手の候補: 子の手の色の小さな石に文字。今の手順でたどる候補は枠で囲む
+  for (const c of p.candidates ?? []) {
+    const bx = c.point % size;
+    const by = (c.point - bx) / size;
+    if (!inView(bx, by)) continue;
+    const cr = r * 0.62;
+    ctx.globalAlpha = c.selected ? 0.9 : 0.72;
+    ctx.fillStyle = c.color === BLACK ? '#1a1a1a' : '#fafafa';
+    ctx.beginPath();
+    ctx.arc(X(bx), Y(by), cr, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = Math.max(1, r * (c.selected ? 0.14 : 0.06));
+    ctx.strokeStyle = c.selected ? CANDIDATE_RING : c.color === BLACK ? '#000000' : '#555555';
+    ctx.stroke();
+    if (c.text) drawLabel(ctx, X(bx), Y(by), cr * 0.95, c.text, c.color === BLACK ? '#ffffff' : '#000000');
   }
 
   // 置く予定の石（マウスホバー時）

@@ -79,6 +79,7 @@ describe('設定の保存と復元', () => {
     s.numberStyle = 'absolute';
     s.labelText = 'あ';
     s.inheritMarks = false;
+    s.candidates = 'all';
     saveSettings(storage, s);
     expect(storage.data.has(SETTINGS_KEY)).toBe(true);
 
@@ -98,6 +99,7 @@ describe('設定の保存と復元', () => {
       numberStyle: 'roman',
       labelText: 'AB',
       inheritMarks: 0,
+      candidates: 'some',
     });
     expect(s).toEqual(initialSettings());
   });

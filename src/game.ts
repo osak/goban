@@ -179,6 +179,33 @@ export function playMove(board: Board, point: number, color: StoneColor): Array<
   return removed;
 }
 
+/** ノードの手（着手ノードでなければ null）。lastNumber は直前の手の手数 */
+function nodeMove(node: SgfNode, depth: number, size: number, lastNumber: number): GameMove | null {
+  const m = moveOf(node, size);
+  const cm = m ? null : capturelessMoveOf(node, size);
+  const played = m ?? cm;
+  if (!played) return null;
+  const number = parseNumber(getValue(node, 'MN') ?? '') ?? lastNumber + 1;
+  return { nodeId: node.id, depth, color: played.color, point: played.point, number, captureless: m === null };
+}
+
+/**
+ * 手順の上の着手（局面は打ち直さない）。nodes は根からのノードの列。
+ * 着手のログで、今のノードより先の手を出すのに使う
+ */
+export function lineMoves(nodes: readonly SgfNode[], size: number): GameMove[] {
+  const out: GameMove[] = [];
+  let last = 0;
+  nodes.forEach((node, depth) => {
+    const move = nodeMove(node, depth, size, last);
+    if (move) {
+      out.push(move);
+      last = move.number;
+    }
+  });
+  return out;
+}
+
 function runNode(prev: Step | null, node: SgfNode, depth: number, size: number): Step {
   const board = prev ? prev.board.clone() : new Board(size);
   let captured = prev?.captured ?? new Map<number, StoneColor>();
@@ -210,21 +237,11 @@ function runNode(prev: Step | null, node: SgfNode, depth: number, size: number):
   }
 
   const lastNumber = prev?.lastNumber ?? 0;
-  const mn = parseNumber(getValue(node, 'MN') ?? '');
-  let move: GameMove | null = null;
-  const m = moveOf(node, size);
-  if (m) {
-    if (m.point !== null) {
-      touch(m.point);
-      const removed = playMove(board, m.point, m.color);
-      for (const [s, c] of removed) editCaptured().set(s, c);
-    }
-    move = { nodeId: node.id, depth, color: m.color, point: m.point, number: mn ?? lastNumber + 1, captureless: false };
-  } else {
-    const cm = capturelessMoveOf(node, size);
-    if (cm) {
-      move = { nodeId: node.id, depth, color: cm.color, point: cm.point, number: mn ?? lastNumber + 1, captureless: true };
-    }
+  const move = nodeMove(node, depth, size, lastNumber);
+  if (move && !move.captureless && move.point !== null) {
+    touch(move.point);
+    const removed = playMove(board, move.point, move.color);
+    for (const [s, c] of removed) editCaptured().set(s, c);
   }
 
   const moveCount = (prev?.moveCount ?? 0) + (move ? 1 : 0);
