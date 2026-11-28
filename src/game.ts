@@ -155,8 +155,11 @@ interface Step {
   readonly lastNumber: number;
 }
 
-/** 石を打つ。石のある点にも上書きで打つ。取り除いた石（自分の連も含む）とその色を返す */
-function play(board: Board, point: number, color: StoneColor): Array<[number, StoneColor]> {
+/**
+ * 石を打つ（SGF の B / W の実行）。石のある点にも上書きで打ち、相手の呼吸点のない連を取り、
+ * それでも自分の連に呼吸点がなければ自分の連を取り除く。取り除いた石（自分の連も含む）とその色を返す
+ */
+export function playMove(board: Board, point: number, color: StoneColor): Array<[number, StoneColor]> {
   const removed: Array<[number, StoneColor]> = [];
   const take = (stones: readonly number[]) => {
     for (const s of stones) {
@@ -213,7 +216,7 @@ function runNode(prev: Step | null, node: SgfNode, depth: number, size: number):
   if (m) {
     if (m.point !== null) {
       touch(m.point);
-      const removed = play(board, m.point, m.color);
+      const removed = playMove(board, m.point, m.color);
       for (const [s, c] of removed) editCaptured().set(s, c);
     }
     move = { nodeId: node.id, depth, color: m.color, point: m.point, number: mn ?? lastNumber + 1, captureless: false };

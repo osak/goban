@@ -1,31 +1,53 @@
 /**
- * 碁盤アプリの UI。ポインタ操作・元に戻す・拡大・PNG / SGF 出力・保存をつなぐ。
+ * 碁盤アプリの UI。ポインタ操作・元に戻す・拡大・PNG / SGF の保存と読み込み・盤面の一覧をつなぐ。
+ *
+ * 盤面の内容はゲームツリー（edit.ts の Doc）だけに持ち、表示する局面はそこから導出する（game.ts）。
  */
 
-import { BLACK, Board, CAPTURE_MODES, EMPTY, opposite, type PlaceResult, type StoneColor } from './board';
-import { eraseCapturing, placeCapturing, settleCaptured } from './capture';
+import { BLACK, Board, CAPTURE_MODES, EMPTY, type StoneColor } from './board';
 import { COORD_STYLES, pointName } from './coords';
+import {
+  docName,
+  docNodes,
+  eraseStone,
+  hasContent,
+  labelsAt,
+  newDoc,
+  nextColorOf,
+  placeStone,
+  renameDoc,
+  resetDoc,
+  setLabel,
+  setNumberStart,
+  setTriangle,
+  toggleTurn,
+  trianglesAt,
+  type Doc,
+  type EditOptions,
+} from './edit';
 import { downloadBlob, exportFileName, renderPng } from './export';
+import { PositionCache, type GamePosition } from './game';
 import { UndoHistory } from './history';
 import {
-  applyEntry,
   cleanName,
   defaultName,
   emptyEntry,
-  entryFromState,
+  entryFromDoc,
+  entryName,
   loadLibrary,
   newId,
   saveLibrary,
   sortedEntries,
   type BoardEntry,
 } from './library';
-import { pickLabelText, sameLabels } from './labels';
+import { pickLabelText } from './labels';
 import { computeLayout, hitTest, hitTestClamped, hitsAlongSegment, type Layout } from './layout';
-import { NUMBER_STYLES, movesOnBoard, stoneNumbers, withoutLastMoveAt, type Move } from './moves';
-import { getStorage, loadState, saveState } from './persistence';
+import { NUMBER_STYLES, movesOnBoard, stoneNumbers } from './moves';
+import { getStorage, loadSettings, saveSettings } from './persistence';
 import { THEME_NAMES, draw, drawThumbnail } from './renderer';
-import { toSgf } from './sgf';
+import { exportSgf, importSgfBytes } from './sgf-file';
 import { BOARD_SIZES, COLOR_MODES, currentColor, initialState, type AppState, type Tool } from './state';
+import { getProp, setProp } from './tree';
 import { fullView, isFullView, normalizeView, viewAround, viewFromPoints, type Point, type View } from './view';
 
 /** ドラッグ中に交点に「触れた」とみなす距離（マス単位） */
@@ -40,20 +62,10 @@ interface ScreenLayout extends Layout {
   readonly cssHeight: number;
 }
 
-interface Snapshot {
-  readonly size: number;
-  readonly grid: Uint8Array;
-  readonly nextColor: StoneColor;
-  readonly moves: readonly Move[];
-  readonly marks: ReadonlySet<number>;
-  readonly captured: ReadonlySet<number>;
-  readonly labels: ReadonlyMap<number, string>;
-}
-
 /** 石を置く／消す操作（タップまたはドラッグ）の途中経過 */
 interface Stroke {
   readonly pointerId: number;
-  readonly before: Snapshot;
+  readonly before: Doc;
   /** 石を置く / 石を消す / △を付ける / △を外す / 文字を書く・消す */
   readonly action: 'place' | 'erase' | 'mark' | 'unmark' | 'label';
   readonly color: StoneColor;
@@ -92,18 +104,29 @@ function samePoint(a: Point | null, b: Point | null): boolean {
   return a === null || b === null ? a === b : a.x === b.x && a.y === b.y;
 }
 
-function sameGrid(a: Uint8Array, b: Uint8Array): boolean {
-  return a.length === b.length && a.every((v, i) => v === b[i]);
+function sameDoc(a: Doc, b: Doc): boolean {
+  return a.root === b.root && a.turn === b.turn && a.cursor.length === b.cursor.length && a.cursor.every((k, i) => k === b.cursor[i]);
+}
+
+function sameValues(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  return a === b || (a !== undefined && b !== undefined && a.length === b.length && a.every((v, i) => v === b[i]));
 }
 
 export class GobanApp {
   private state: AppState = initialState();
   private readonly storage = getStorage();
-  /** 保存した盤面の一覧。currentId の盤面が今 state に読み込まれている */
+  /** 今の盤面のゲームツリーと今のノード */
+  private doc: Doc = newDoc(19);
+  /** 今の盤面の表示範囲 */
+  private view: View = fullView(19);
+  private readonly positions = new PositionCache();
+  /** doc の今のノードの局面 */
+  private pos: GamePosition = this.positions.position(docNodes(this.doc));
+  /** 保存した盤面の一覧。currentId の盤面が今 doc に読み込まれている */
   private entries: BoardEntry[] = [];
   private currentId = '';
   /** 盤面ごとの元に戻す／やり直すの履歴（このページを開いている間だけ） */
-  private readonly histories = new Map<string, UndoHistory<Snapshot>>();
+  private readonly histories = new Map<string, UndoHistory<Doc>>();
   /** 盤面一覧のサムネイル（盤面の内容が変わったら作り直す） */
   private readonly thumbnails = new Map<string, { key: string; canvas: HTMLCanvasElement }>();
   /** 保存に失敗したことを知らせたか */
@@ -130,6 +153,8 @@ export class GobanApp {
     resetZoom: byId('resetZoom', HTMLButtonElement),
     exportPng: byId('exportPng', HTMLButtonElement),
     exportSgf: byId('exportSgf', HTMLButtonElement),
+    openSgf: byId('openSgf', HTMLButtonElement),
+    sgfFile: byId('sgfFile', HTMLInputElement),
     settingsToggle: byId('settingsBtn', HTMLButtonElement),
     settings: byId('settings', HTMLElement),
     clear: byId('clearBoard', HTMLButtonElement),
@@ -162,9 +187,8 @@ export class GobanApp {
   }
 
   start(): void {
-    loadState(this.storage, this.state);
+    loadSettings(this.storage, this.state);
     this.loadEntries();
-    this.syncCaptured();
     this.bindPointer();
     this.bindPanel();
     this.bindKeyboard();
@@ -189,11 +213,13 @@ export class GobanApp {
     this.ui.zoomHint.classList.toggle('selecting', this.selection !== null);
     const L = this.layout;
     if (!L) return;
-    const { board, view, theme, coordStyle, tool } = this.state;
+    const { theme, coordStyle, tool } = this.state;
+    const { view } = this;
+    const board = this.displayBoard();
     const hover = this.hover;
     const ghost =
       hover && !this.stroke && tool === 'stone' && board.get(hover.x, hover.y) === EMPTY
-        ? { ...hover, color: currentColor(this.state) }
+        ? { ...hover, color: this.placeColor() }
         : null;
     this.ctx.setTransform(this.canvas.width / L.cssWidth, 0, 0, this.canvas.height / L.cssHeight, 0, 0);
     draw(this.ctx, {
@@ -204,25 +230,67 @@ export class GobanApp {
       coordStyle,
       marks: this.marks(),
       numbers: this.numbers(),
-      labels: this.state.labels,
+      labels: labelsAt(this.doc),
       ghost,
       selection: this.selection,
       scale: this.scale,
     });
   }
 
-  /** △を付ける石: 手で付けたもの（石があるところだけ）と、「△マーク」モードの取られた石 */
+  /**
+   * 表示する盤面。「△マーク」モードでは、経路上の手で取られた石（その後その点に石が置かれていないもの）も
+   * 盤上に残して表示する（△を付ける）
+   */
+  private displayBoard(): Board {
+    const { board, captured } = this.pos;
+    if (this.state.captureMode !== 'mark' || captured.size === 0) return board;
+    const out = board.clone();
+    for (const [i, color] of captured) out.grid[i] = color;
+    return out;
+  }
+
+  /** △を付ける石: 今のノードの△（石があるところだけ）と、「△マーク」モードの取られた石 */
   private marks(): Set<number> {
-    const { board, captureMode } = this.state;
-    const out = captureMode === 'mark' ? new Set(this.state.captured) : new Set<number>();
-    for (const i of this.state.marks) if (board.grid[i] !== EMPTY) out.add(i);
+    const board = this.displayBoard();
+    const out = this.state.captureMode === 'mark' ? new Set(this.pos.captured.keys()) : new Set<number>();
+    for (const i of trianglesAt(this.doc)) if (board.grid[i] !== EMPTY) out.add(i);
     return out;
   }
 
   /** 石に書く着手番号（表示しないときは null） */
   private numbers(): Map<number, number> | null {
-    const { board, moves, numbering, numberFrom, numberStyle } = this.state;
-    return numbering ? stoneNumbers(board, moves, numberFrom, numberStyle) : null;
+    const { numbering, numberStyle } = this.state;
+    return numbering ? stoneNumbers(this.displayBoard(), this.pos.moves, this.pos.numberFrom, numberStyle) : null;
+  }
+
+  /** 次の手番（交互モードで置く色） */
+  private nextColor(): StoneColor {
+    return nextColorOf(this.doc, this.pos);
+  }
+
+  /** 今タップしたら置かれる石の色 */
+  private placeColor(): StoneColor {
+    return currentColor(this.state.colorMode, this.nextColor());
+  }
+
+  private get editOptions(): EditOptions {
+    return { inheritMarks: this.state.inheritMarks };
+  }
+
+  private readonly positionOf = (nodes: Parameters<PositionCache['position']>[0]) => this.positions.position(nodes);
+
+  /** 盤面の内容を doc にする（局面を求め直す） */
+  private setDoc(doc: Doc): void {
+    const prevSize = this.pos.size;
+    this.doc = doc;
+    this.pos = this.positions.position(docNodes(doc));
+    if (this.pos.size !== prevSize) {
+      this.view = fullView(this.pos.size);
+      this.hover = null;
+      this.relayout();
+    } else {
+      this.requestRender();
+    }
   }
 
   /** 表示領域の大きさに合わせてキャンバスの大きさを決め直す */
@@ -231,7 +299,7 @@ export class GobanApp {
     const w = this.area.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     const h = this.area.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     if (!(w > 0 && h > 0)) return;
-    const layout = computeLayout(this.state.view, w, h, this.state.coordStyle);
+    const layout = computeLayout(this.view, w, h, this.state.coordStyle);
     const cssWidth = Math.max(1, Math.floor(layout.width));
     const cssHeight = Math.max(1, Math.floor(layout.height));
     this.layout = { ...layout, cssWidth, cssHeight };
@@ -247,63 +315,41 @@ export class GobanApp {
   // 履歴
   // ---------------------------------------------------------------------------
 
-  private snapshot(): Snapshot {
-    const { board, nextColor, moves, marks, captured, labels } = this.state;
-    return {
-      size: board.size,
-      grid: board.grid.slice(),
-      nextColor,
-      moves: moves.slice(),
-      marks: new Set(marks),
-      captured: new Set(captured),
-      labels: new Map(labels),
-    };
-  }
-
-  private applySnapshot(snap: Snapshot): void {
-    if (snap.size !== this.state.board.size) {
-      this.state.board = new Board(snap.size, snap.grid);
-      this.state.view = fullView(snap.size);
-      this.hover = null;
-      this.relayout();
-    } else {
-      this.state.board.grid.set(snap.grid);
-      this.requestRender();
-    }
-    this.state.nextColor = snap.nextColor;
-    this.state.moves = snap.moves.slice();
-    this.state.marks = new Set(snap.marks);
-    this.state.captured = new Set(snap.captured);
-    this.state.labels = new Map(snap.labels);
-    this.syncCaptured(); // 記録したあとにモードを切り替えていることがある
+  /** 元に戻す／やり直すで doc にする。盤面の名前は履歴に含めず、今の名前を保つ */
+  private restore(doc: Doc): void {
+    const name = getProp(this.doc.root, 'GN');
+    const restored = sameValues(getProp(doc.root, 'GN'), name)
+      ? doc
+      : { ...doc, root: setProp(doc.root, 'GN', name ?? null) };
+    this.setDoc(restored);
     this.changed();
   }
 
   private undo(): void {
     if (this.stroke) return;
-    const prev = this.history.undo(this.snapshot());
-    if (prev) this.applySnapshot(prev);
+    const prev = this.history.undo(this.doc);
+    if (prev) this.restore(prev);
   }
 
   private redo(): void {
     if (this.stroke) return;
-    const next = this.history.redo(this.snapshot());
-    if (next) this.applySnapshot(next);
+    const next = this.history.redo(this.doc);
+    if (next) this.restore(next);
   }
 
   /** 状態が変わったあとに保存とパネル表示の更新を行う */
   private changed(): void {
-    saveState(this.storage, this.state);
+    saveSettings(this.storage, this.state);
     this.syncCurrentEntry();
     this.saveEntries();
     this.updateUI();
   }
 
   /** 今の盤面の履歴 */
-  private get history(): UndoHistory<Snapshot> {
+  private get history(): UndoHistory<Doc> {
     let h = this.histories.get(this.currentId);
     if (!h) {
-      h = new UndoHistory<Snapshot>(HISTORY_LIMIT);
+      h = new UndoHistory<Doc>(HISTORY_LIMIT);
       this.histories.set(this.currentId, h);
     }
     return h;
@@ -317,28 +363,39 @@ export class GobanApp {
     return this.entries.find((e) => e.id === this.currentId);
   }
 
-  /** 保存した盤面の一覧を読み込み、選んでいた盤面を state に反映する */
+  /** 保存した盤面の一覧を読み込み（以前の版の保存データは移し）、選んでいた盤面を開く */
   private loadEntries(): void {
     const library = loadLibrary(this.storage);
     if (library) {
       this.entries = [...library.entries];
       this.currentId = library.currentId;
-      const entry = this.currentEntry;
-      if (entry) applyEntry(this.state, entry);
     } else {
-      // 盤面の一覧がまだない（初回、または以前の版で保存した盤面）: 今の盤面を 1 つ目として登録する
-      const now = Date.now();
-      const entry = entryFromState(this.state, { id: newId(), name: defaultName([]), createdAt: now }, now);
+      // 盤面がまだない（初回）: 空の盤面を 1 つ目として登録する
+      const entry = emptyEntry(defaultName([]), 19);
       this.entries = [entry];
       this.currentId = entry.id;
       this.saveEntries();
     }
+    const entry = this.currentEntry ?? this.entries[0];
+    this.currentId = entry.id;
+    this.openEntry(entry);
   }
 
-  /** state の盤面の内容を一覧の今の盤面に書き戻す */
+  /** entry の盤面を doc にする */
+  private openEntry(entry: BoardEntry): void {
+    this.doc = entry.doc;
+    this.view = entry.view;
+    this.pos = this.positions.position(docNodes(this.doc));
+  }
+
+  /** doc の内容を一覧の今の盤面に書き戻す */
   private syncCurrentEntry(): void {
     const i = this.entries.findIndex((e) => e.id === this.currentId);
-    if (i >= 0) this.entries[i] = entryFromState(this.state, this.entries[i]);
+    if (i >= 0) this.entries[i] = entryFromDoc(this.doc, this.view, this.pos, this.entries[i]);
+  }
+
+  private entryNames(): string[] {
+    return this.entries.map(entryName);
   }
 
   private saveEntries(): void {
@@ -356,8 +413,7 @@ export class GobanApp {
     if (!entry) return;
     this.syncCurrentEntry();
     this.currentId = id;
-    applyEntry(this.state, entry);
-    this.syncCaptured();
+    this.openEntry(entry);
     this.hover = null;
     this.selection = null;
     this.relayout();
@@ -374,7 +430,7 @@ export class GobanApp {
 
   private newBoard(): void {
     if (this.stroke) return;
-    this.addBoard(emptyEntry(defaultName(this.entries), this.state.board.size));
+    this.addBoard(emptyEntry(defaultName(this.entryNames()), this.pos.size));
   }
 
   private duplicateBoard(): void {
@@ -383,14 +439,15 @@ export class GobanApp {
     const src = this.currentEntry;
     if (!src) return;
     const now = Date.now();
-    const name = cleanName(`${src.name} のコピー`, defaultName(this.entries));
-    this.addBoard({ ...src, id: newId(), name, createdAt: now, updatedAt: now });
+    const name = cleanName(`${entryName(src)} のコピー`, defaultName(this.entryNames()));
+    const doc = renameDoc(src.doc, name);
+    this.addBoard(entryFromDoc(doc, src.view, this.pos, { id: newId(), createdAt: now }, now));
   }
 
   private deleteBoard(): void {
     const entry = this.currentEntry;
     if (this.stroke || !entry) return;
-    if (!window.confirm(`「${entry.name}」を削除しますか？\n（削除すると元に戻せません）`)) return;
+    if (!window.confirm(`「${entryName(entry)}」を削除しますか？\n（削除すると元に戻せません）`)) return;
     this.entries = this.entries.filter((e) => e.id !== entry.id);
     this.histories.delete(entry.id);
     this.thumbnails.delete(entry.id);
@@ -400,20 +457,21 @@ export class GobanApp {
     this.switchBoard(next.id);
   }
 
+  /** 盤面の名前（根の GN）を変える。名前は元に戻すの履歴に含めない */
   private renameBoard(name: string, final: boolean): void {
-    const i = this.entries.findIndex((e) => e.id === this.currentId);
-    if (i < 0) return;
-    const fallback = this.entries[i].name;
-    const cleaned = final ? cleanName(name, fallback) : Array.from(name).slice(0, 40).join('') || fallback;
-    if (cleaned === this.entries[i].name) return;
-    this.entries[i] = { ...this.entries[i], name: cleaned };
+    const fallback = docName(this.doc);
+    const cleaned = final ? cleanName(name, fallback) : Array.from(name).slice(0, 40).join('').trim() || fallback;
+    if (cleaned === fallback) return;
+    this.doc = renameDoc(this.doc, cleaned);
+    this.pos = this.positions.position(docNodes(this.doc));
+    this.syncCurrentEntry();
     this.saveEntries();
     this.updateBoardList();
     this.updateTitle();
   }
 
   private updateTitle(): void {
-    const name = this.currentEntry?.name;
+    const name = docName(this.doc);
     document.title = name ? `${name} - 碁盤` : '碁盤';
   }
 
@@ -421,7 +479,7 @@ export class GobanApp {
   private updateBoardList(): void {
     const { boardList: list, boardName } = this.ui;
     const current = this.currentEntry;
-    if (current && document.activeElement !== boardName) boardName.value = current.name;
+    if (current && document.activeElement !== boardName) boardName.value = docName(this.doc);
     this.ui.deleteBoard.disabled = !current;
     if (this.ui.boards.hidden) return;
 
@@ -434,11 +492,11 @@ export class GobanApp {
       info.className = 'board-info';
       const name = document.createElement('span');
       name.className = 'board-name';
-      name.textContent = e.name;
+      name.textContent = entryName(e);
       const meta = document.createElement('span');
       meta.className = 'board-meta';
-      const moves = e.moves.length / 3;
-      const stones = e.stones.replace(/0/g, '').length;
+      const moves = e.moves;
+      const stones = e.thumb.replace(/0/g, '').length;
       meta.textContent = [`${e.size}路`, moves > 0 ? `${moves}手` : `${stones}子`, formatTime(e.updatedAt)].join(' ・ ');
       info.append(name, meta);
       btn.append(this.thumbnail(e), info);
@@ -450,7 +508,7 @@ export class GobanApp {
   }
 
   private thumbnail(e: BoardEntry): HTMLCanvasElement {
-    const key = `${this.state.theme}:${e.size}:${e.stones}`;
+    const key = `${this.state.theme}:${e.size}:${e.thumb}`;
     const cached = this.thumbnails.get(e.id);
     if (cached && cached.key === key) return cached.canvas;
     const canvas = cached?.canvas ?? document.createElement('canvas');
@@ -460,7 +518,7 @@ export class GobanApp {
     canvas.width = Math.round(css * scale);
     canvas.height = Math.round(css * scale);
     const ctx = canvas.getContext('2d');
-    const board = Board.deserialize(e.size, e.stones);
+    const board = Board.deserialize(e.size, e.thumb);
     if (ctx && board) {
       ctx.setTransform(scale, 0, 0, scale, 0, 0);
       drawThumbnail(ctx, board, css, this.state.theme);
@@ -512,40 +570,40 @@ export class GobanApp {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (this.stroke || this.selection) return; // 2 本目の指は無視する
     const pt = this.canvasPoint(e, L);
-    const { state } = this;
+    const { state, view } = this;
 
     if (state.tool === 'zoom') {
       e.preventDefault();
-      const p = hitTestClamped(L, state.view, pt.x, pt.y);
+      const p = hitTestClamped(L, view, pt.x, pt.y);
       this.selection = { pointerId: e.pointerId, a: p, b: p };
       this.capturePointer(e);
       this.requestRender();
       return;
     }
 
-    const p = hitTest(L, state.view, pt.x, pt.y);
+    const p = hitTest(L, view, pt.x, pt.y);
     if (!p) return;
     e.preventDefault();
     this.capturePointer(e);
 
-    const board = state.board;
+    const board = this.pos.board;
     const i = board.index(p.x, p.y);
     const marking = state.tool === 'mark';
     const labeling = state.tool === 'label';
     if (marking && board.grid[i] === EMPTY) return; // △は石にだけ付ける
     const stroke: Stroke = {
       pointerId: e.pointerId,
-      before: this.snapshot(),
+      before: this.doc,
       action: labeling
         ? 'label'
         : marking
-          ? state.marks.has(i)
+          ? trianglesAt(this.doc).has(i)
             ? 'unmark'
             : 'mark'
-          : board.grid[i] === EMPTY
+          : board.grid[i] === EMPTY // 「△マーク」の△（取られた石）の点は空点なので、そのまま打てる
             ? 'place'
             : 'erase',
-      color: currentColor(state),
+      color: this.placeColor(),
       drag: marking || (!labeling && state.colorMode !== 'alternate'),
       last: pt,
       visited: new Set([i]),
@@ -554,24 +612,14 @@ export class GobanApp {
 
     if (stroke.action === 'label') {
       // 同じ文字があればタップで消し、違う文字（またはなし）なら書く。書く文字が空ならタップで消す
-      if (state.labelText === '' || state.labels.get(i) === state.labelText) state.labels.delete(i);
-      else state.labels.set(i, state.labelText);
-    } else if (stroke.action === 'mark') {
-      state.marks.add(i);
-    } else if (stroke.action === 'unmark') {
-      state.marks.delete(i);
+      const text = state.labelText === '' || labelsAt(this.doc).get(i) === state.labelText ? null : state.labelText;
+      this.setDoc(setLabel(this.doc, i, text));
+    } else if (stroke.action === 'mark' || stroke.action === 'unmark') {
+      this.setDoc(setTriangle(this.doc, i, stroke.action === 'mark'));
     } else if (stroke.action === 'place') {
-      const res = this.placeStone(p.x, p.y, stroke.color);
-      if (res.ok) {
-        state.moves.push({ x: p.x, y: p.y, color: stroke.color });
-        if (state.colorMode === 'alternate') state.nextColor = opposite(stroke.color);
-      } else if (res.reason === 'suicide') {
-        this.toast('そこには置けません（呼吸点がありません）');
-      }
+      if (this.placeAt(i, stroke.color) === 'suicide') this.toast('そこには置けません（呼吸点がありません）');
     } else {
-      const removed = this.eraseStone(p.x, p.y);
-      // 交互モードで石を取り除いたら、その色をもう一度置ける手番にする
-      if (state.colorMode === 'alternate' && removed !== EMPTY) state.nextColor = removed;
+      this.eraseAt(i);
     }
     this.hover = null;
     this.requestRender();
@@ -580,12 +628,12 @@ export class GobanApp {
   private onPointerMove(e: PointerEvent): void {
     const L = this.layout;
     if (!L) return;
-    const { state } = this;
+    const { state, view } = this;
 
     const sel = this.selection;
     if (sel && e.pointerId === sel.pointerId) {
       const pt = this.canvasPoint(e, L);
-      const p = hitTestClamped(L, state.view, pt.x, pt.y);
+      const p = hitTestClamped(L, view, pt.x, pt.y);
       if (!samePoint(p, sel.b)) {
         sel.b = p;
         this.requestRender();
@@ -596,38 +644,30 @@ export class GobanApp {
     const stroke = this.stroke;
     if (stroke && e.pointerId === stroke.pointerId) {
       if (!stroke.drag) return;
-      const board = state.board;
       const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
-      let changed = false;
       for (const ev of coalesced.length ? coalesced : [e]) {
         const pt = this.canvasPoint(ev, L);
-        for (const p of hitsAlongSegment(L, state.view, stroke.last.x, stroke.last.y, pt.x, pt.y, DRAG_RADIUS)) {
+        for (const p of hitsAlongSegment(L, view, stroke.last.x, stroke.last.y, pt.x, pt.y, DRAG_RADIUS)) {
+          const board = this.pos.board;
           const i = board.index(p.x, p.y);
           if (stroke.visited.has(i)) continue;
           stroke.visited.add(i);
           if (stroke.action === 'mark' || stroke.action === 'unmark') {
-            if (board.grid[i] === EMPTY) continue;
-            if (stroke.action === 'mark') state.marks.add(i);
-            else state.marks.delete(i);
-            changed = true;
+            if (board.grid[i] !== EMPTY) this.setDoc(setTriangle(this.doc, i, stroke.action === 'mark'));
           } else if (stroke.action === 'place') {
-            if (board.grid[i] === EMPTY && this.placeStone(p.x, p.y, stroke.color).ok) {
-              state.moves.push({ x: p.x, y: p.y, color: stroke.color });
-              changed = true;
-            }
-          } else if (this.eraseStone(p.x, p.y) !== EMPTY) {
-            changed = true;
+            if (board.grid[i] === EMPTY) this.placeAt(i, stroke.color);
+          } else {
+            this.eraseAt(i);
           }
         }
         stroke.last = pt;
       }
-      if (changed) this.requestRender();
       return;
     }
 
     if (e.pointerType === 'mouse' && state.tool === 'stone') {
       const pt = this.canvasPoint(e, L);
-      const p = hitTest(L, state.view, pt.x, pt.y);
+      const p = hitTest(L, view, pt.x, pt.y);
       if (!samePoint(p, this.hover)) {
         this.hover = p;
         this.requestRender();
@@ -639,7 +679,7 @@ export class GobanApp {
     const sel = this.selection;
     if (sel && e.pointerId === sel.pointerId) {
       this.selection = null;
-      const size = this.state.board.size;
+      const size = this.pos.size;
       const view = samePoint(sel.a, sel.b) ? viewAround(sel.a, TAP_ZOOM_SPAN, size) : viewFromPoints(sel.a, sel.b, size);
       this.setTool(this.toolBeforeZoom);
       this.setView(view);
@@ -656,61 +696,30 @@ export class GobanApp {
     if (this.stroke && e.pointerId === this.stroke.pointerId) this.finishStroke();
   }
 
-  /** 囲まれた石の扱いに合わせて石を置く */
-  private placeStone(x: number, y: number, color: StoneColor): PlaceResult {
-    const { board, captured, captureMode } = this.state;
-    return captureMode === 'mark'
-      ? placeCapturing(board, captured, x, y, color)
-      : board.place(x, y, color, captureMode);
+  /** 交点 i に石を置く（囲まれた石の扱いに合わせる）。置けなければその理由 */
+  private placeAt(i: number, color: StoneColor): 'ok' | 'occupied' | 'suicide' {
+    const res = placeStone(this.doc, this.positionOf, i, color, this.state.captureMode, this.editOptions);
+    if (!res.ok) return res.reason;
+    this.setDoc(res.doc);
+    return 'ok';
   }
 
   /**
-   * 石を取り除き、取り除いた石の色を返す。
-   * 最後に置いた石なら置き間違いの修正とみなして着手の記録からも消す。
-   * それ以外の石は記録に残す（取られた石を手で取り除く場合など）。
-   * 「△マーク」モードで取られていない石を取り除いたら、それに囲まれていた取られた石は元に戻す。
+   * 交点 i の石を取り除く。今のノードの手で置いた石なら置き間違いの修正とみなしてそのノードを消し、
+   * それ以外の石は配置（AE）で消す。交互モードでは、取り除いた石の色をもう一度置ける手番にする
    */
-  private eraseStone(x: number, y: number): ReturnType<Board['remove']> {
-    const { board, captured } = this.state;
-    const i = board.index(x, y);
-    const wasCaptured = captured.has(i);
-    const removed = board.remove(x, y);
-    if (removed !== EMPTY) {
-      const moves = withoutLastMoveAt(this.state.moves, x, y, removed);
-      if (moves) this.state.moves = moves;
-      if (this.state.captureMode === 'mark') eraseCapturing(board, captured, i, removed, wasCaptured);
-    }
-    return removed;
-  }
-
-  /**
-   * 取られた石を今のモードに合わせる。
-   * 「△マーク」モードでは盤面と食い違わないように整え（打った順が分からない石は呼吸点のない連をすべて取られた石にする）、
-   * ほかのモードでは空にする。
-   */
-  private syncCaptured(): void {
-    const { board, captured } = this.state;
-    if (this.state.captureMode === 'mark') settleCaptured(board, captured);
-    else captured.clear();
+  private eraseAt(i: number): boolean {
+    const doc = eraseStone(this.doc, this.positionOf, i, this.state.colorMode === 'alternate', this.editOptions);
+    if (!doc) return false;
+    this.setDoc(doc);
+    return true;
   }
 
   private finishStroke(): void {
     const stroke = this.stroke;
     if (!stroke) return;
     this.stroke = null;
-    this.pruneMarks();
-    const { board, moves, marks, labels } = this.state;
-    const sameMarks = marks.size === stroke.before.marks.size && [...marks].every((i) => stroke.before.marks.has(i));
-    if (
-      sameGrid(stroke.before.grid, board.grid) &&
-      stroke.before.moves.length === moves.length &&
-      sameMarks &&
-      sameLabels(stroke.before.labels, labels)
-    ) {
-      this.state.nextColor = stroke.before.nextColor;
-    } else {
-      this.history.record(stroke.before);
-    }
+    if (!sameDoc(stroke.before, this.doc)) this.history.record(stroke.before);
     this.changed();
     this.requestRender();
   }
@@ -719,10 +728,12 @@ export class GobanApp {
   // 操作
   // ---------------------------------------------------------------------------
 
-  /** 石がなくなった交点の△を外す（取られた石の跡に後から置いた石に△が残らないように） */
-  private pruneMarks(): void {
-    const { board, marks } = this.state;
-    for (const i of marks) if (board.grid[i] === EMPTY) marks.delete(i);
+  /** 記録を変える操作（元に戻せる）。doc が変わらなければ何もしない */
+  private edit(doc: Doc): void {
+    if (sameDoc(doc, this.doc)) return;
+    this.history.record(this.doc);
+    this.setDoc(doc);
+    this.changed();
   }
 
   private setTool(tool: Tool): void {
@@ -736,86 +747,88 @@ export class GobanApp {
   }
 
   private setView(view: View): void {
-    this.state.view = normalizeView(view, this.state.board.size);
+    this.view = normalizeView(view, this.pos.size);
     this.hover = null;
     this.relayout();
     this.changed();
   }
 
   private setBoardSize(size: number): void {
-    if (this.stroke || size === this.state.board.size) return;
+    if (this.stroke || size === this.pos.size) return;
     const message = `${size}路盤に変更すると今の盤面は消えます。よろしいですか？\n（「元に戻す」で復元できます）`;
-    if (!this.state.board.isEmpty() && !window.confirm(message)) return;
-    this.history.record(this.snapshot());
-    this.state.board = new Board(size);
-    this.state.view = fullView(size);
-    this.state.nextColor = BLACK;
-    this.resetMoves();
-    this.hover = null;
-    this.relayout();
-    this.changed();
+    if (hasContent(this.doc, this.pos) && !window.confirm(message)) return;
+    this.edit(resetDoc(this.doc, size));
   }
 
   private clearBoard(): void {
-    const { board, moves, labels } = this.state;
-    if (this.stroke || (board.isEmpty() && moves.length === 0 && labels.size === 0)) return;
+    const { board, moves } = this.pos;
+    if (this.stroke || !hasContent(this.doc, this.pos)) return;
     const message = !board.isEmpty()
       ? '盤面の石と文字をすべて消しますか？\n（「元に戻す」で復元できます）'
-      : moves.length === 0
+      : moves.length === 0 && this.doc.root.children.length === 0
         ? '盤面の文字をすべて消しますか？\n（「元に戻す」で復元できます）'
         : '着手のログと盤面の文字を消しますか？\n（「元に戻す」で復元できます）';
     if (!window.confirm(message)) return;
-    this.history.record(this.snapshot());
-    board.clear();
-    this.state.nextColor = BLACK;
-    this.resetMoves();
-    this.requestRender();
-    this.changed();
-  }
-
-  /** 盤面を新しくしたときに着手の記録・番号の起点・△・文字を消す */
-  private resetMoves(): void {
-    this.state.moves = [];
-    this.state.numberFrom = 0;
-    this.state.marks = new Set();
-    this.state.captured = new Set();
-    this.state.labels = new Map();
+    this.edit(resetDoc(this.doc, this.pos.size));
   }
 
   private async exportPng(): Promise<void> {
-    const { board, view, theme, coordStyle } = this.state;
+    const { theme, coordStyle } = this.state;
     const blob = await renderPng({
-      board,
-      view,
+      board: this.displayBoard(),
+      view: this.view,
       theme,
       coordStyle,
       marks: this.marks(),
       numbers: this.numbers(),
-      labels: this.state.labels,
+      labels: labelsAt(this.doc),
     });
     if (!blob) {
       this.toast('PNG の作成に失敗しました');
       return;
     }
-    downloadBlob(blob, exportFileName(new Date(), this.currentEntry?.name));
+    downloadBlob(blob, exportFileName(new Date(), docName(this.doc)));
     this.toast('PNG を保存しました');
   }
 
   private exportSgf(): void {
-    const { board, moves, captured, labels, view, colorMode, nextColor } = this.state;
-    const name = this.currentEntry?.name;
-    const sgf = toSgf({
-      board,
-      moves,
-      marks: this.marks(),
-      captured: this.state.captureMode === 'mark' ? captured : new Set(),
-      labels,
-      view,
-      name,
-      nextColor: colorMode === 'alternate' ? nextColor : null,
-    });
+    const sgf = exportSgf(this.doc, this.view, this.pos.size);
+    const name = docName(this.doc);
     downloadBlob(new Blob([sgf], { type: 'application/x-go-sgf' }), exportFileName(new Date(), name, 'sgf'));
     this.toast('SGF を保存しました');
+  }
+
+  /** SGF のファイルを読み込み、各ゲームツリーを新しい盤面として一覧に加える */
+  private async importSgf(file: File): Promise<void> {
+    if (this.stroke) return;
+    const stem = file.name.replace(/\.sgf$/i, '').trim();
+    let result;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const names = this.entryNames();
+      result = importSgfBytes(bytes, (k) => {
+        const base = stem || defaultName(names);
+        return cleanName(k === 0 ? base : `${base} (${k + 1})`, defaultName(names));
+      });
+    } catch (e) {
+      this.toast(e instanceof Error ? e.message : 'SGF を読めませんでした');
+      return;
+    }
+    const { boards, skipped } = result;
+    if (boards.length === 0) {
+      this.toast(skipped[0] ?? '盤面がありませんでした');
+      return;
+    }
+    this.syncCurrentEntry();
+    const now = Date.now();
+    const added = boards.map((b) =>
+      entryFromDoc(b.doc, b.view, this.positions.position(docNodes(b.doc)), { id: newId(), createdAt: now }, now),
+    );
+    this.entries.push(...added);
+    this.switchBoard(added[0].id);
+    this.ui.boardList.scrollTop = 0;
+    const note = skipped.length > 0 ? `（${skipped.length} 局は読み込めませんでした: ${skipped[0]}）` : '';
+    this.toast(boards.length === 1 ? `「${docName(boards[0].doc)}」を開きました${note}` : `${boards.length} 個の盤面を開きました${note}`);
   }
 
   // ---------------------------------------------------------------------------
@@ -865,11 +878,9 @@ export class GobanApp {
       },
     );
     this.bindSegment('captureMode', CAPTURE_MODES, () => state.captureMode, (v) => {
+      // 記録は変わらない。「△マーク」では、経路上の手で取られた石を△で表示する
       if (this.stroke || v === state.captureMode) return;
       state.captureMode = v;
-      // 「△マーク」に切り替えた時点では打った順が分からないので、呼吸点のない連をすべて取られた石にする
-      state.captured.clear();
-      this.syncCaptured();
       settingChanged();
     });
     this.bindSegment('numbering', ['off', 'on'] as const, () => (state.numbering ? 'on' : 'off'), (v) => {
@@ -883,11 +894,14 @@ export class GobanApp {
     ui.moveLogList.addEventListener('click', (e) => {
       const btn = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('button[data-index]') : null;
       const index = Number(btn?.dataset.index);
-      if (!Number.isInteger(index) || index < 0) return;
-      state.numberFrom = index;
+      if (this.stroke || !Number.isInteger(index) || index < 0) return;
+      this.edit(setNumberStart(this.doc, this.pos, index));
+    });
+    this.bindSegment('inheritMarks', ['on', 'off'] as const, () => (state.inheritMarks ? 'on' : 'off'), (v) => {
+      state.inheritMarks = v === 'on';
       settingChanged();
     });
-    this.bindSegment('boardSize', BOARD_SIZES, () => state.board.size, (v) => this.setBoardSize(v));
+    this.bindSegment('boardSize', BOARD_SIZES, () => this.pos.size, (v) => this.setBoardSize(v));
     this.bindSegment('coordStyle', COORD_STYLES, () => state.coordStyle, (v) => {
       state.coordStyle = v;
       this.changed();
@@ -902,7 +916,7 @@ export class GobanApp {
     const applyLabelText = () => {
       state.labelText = pickLabelText(ui.labelText.value);
       ui.labelText.value = state.labelText;
-      saveState(this.storage, state);
+      saveSettings(this.storage, state);
     };
     ui.labelText.addEventListener('input', (e) => {
       if (!(e instanceof InputEvent && e.isComposing)) applyLabelText();
@@ -913,16 +927,29 @@ export class GobanApp {
       if (e.key === 'Enter' && !e.isComposing) ui.labelText.blur();
     });
 
+    // 今のノードが配置ノードなら PL に書き（元に戻せる）、着手ノードなら一時的に入れ替える
     ui.nextColor.addEventListener('click', () => {
-      state.nextColor = opposite(state.nextColor);
-      settingChanged();
+      if (this.stroke) return;
+      const doc = toggleTurn(this.doc, this.pos);
+      if (doc.root !== this.doc.root) {
+        this.edit(doc);
+      } else {
+        this.setDoc(doc);
+        this.changed();
+      }
     });
     ui.undo.addEventListener('click', () => this.undo());
     ui.redo.addEventListener('click', () => this.redo());
     ui.zoom.addEventListener('click', () => this.setTool(state.tool === 'zoom' ? this.toolBeforeZoom : 'zoom'));
-    ui.resetZoom.addEventListener('click', () => this.setView(fullView(state.board.size)));
+    ui.resetZoom.addEventListener('click', () => this.setView(fullView(this.pos.size)));
     ui.exportPng.addEventListener('click', () => void this.exportPng());
     ui.exportSgf.addEventListener('click', () => this.exportSgf());
+    ui.openSgf.addEventListener('click', () => ui.sgfFile.click());
+    ui.sgfFile.addEventListener('change', () => {
+      const file = ui.sgfFile.files?.[0];
+      ui.sgfFile.value = ''; // 同じファイルをもう一度選べるように
+      if (file) void this.importSgf(file);
+    });
     ui.clear.addEventListener('click', () => this.clearBoard());
     ui.boardsToggle.addEventListener('click', () => {
       ui.boards.hidden = !ui.boards.hidden;
@@ -935,7 +962,7 @@ export class GobanApp {
     ui.boardName.addEventListener('input', () => this.renameBoard(ui.boardName.value, false));
     ui.boardName.addEventListener('change', () => {
       this.renameBoard(ui.boardName.value, true);
-      ui.boardName.value = this.currentEntry?.name ?? '';
+      ui.boardName.value = docName(this.doc);
     });
     ui.boardName.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') ui.boardName.blur();
@@ -971,7 +998,7 @@ export class GobanApp {
   private updateUI(): void {
     const { state, ui } = this;
     for (const update of this.segmentUpdaters) update();
-    const black = state.nextColor === BLACK;
+    const black = this.nextColor() === BLACK;
     ui.nextColor.hidden = state.colorMode !== 'alternate' || state.tool === 'mark' || state.tool === 'label';
     ui.labelText.hidden = state.tool !== 'label';
     if (document.activeElement !== ui.labelText) ui.labelText.value = state.labelText;
@@ -979,7 +1006,7 @@ export class GobanApp {
     ui.nextColorText.textContent = black ? '黒' : '白';
     ui.undo.disabled = !this.history.canUndo;
     ui.redo.disabled = !this.history.canRedo;
-    ui.resetZoom.disabled = isFullView(state.view, state.board.size);
+    ui.resetZoom.disabled = isFullView(this.view, this.pos.size);
     ui.zoom.setAttribute('aria-pressed', String(state.tool === 'zoom'));
     ui.zoomHint.hidden = state.tool !== 'zoom';
     ui.moveLog.hidden = !state.numbering;
@@ -988,11 +1015,12 @@ export class GobanApp {
     this.updateTitle();
   }
 
-  /** 着手のログを描き直す */
+  /** 着手のログ（根から今のノードまでの手）を描き直す */
   private updateMoveLog(): void {
-    const { board, moves, numberFrom, numberStyle, coordStyle } = this.state;
+    const { coordStyle, numberStyle } = this.state;
+    const { moves, numberFrom, size } = this.pos;
     const { moveLogStatus: status, moveLogList: list } = this.ui;
-    const onBoard = movesOnBoard(board, moves);
+    const onBoard = movesOnBoard(this.displayBoard(), moves);
     const from = Math.min(numberFrom, moves.length);
 
     const items = moves.map((m, i) => {
@@ -1001,18 +1029,18 @@ export class GobanApp {
       btn.dataset.index = String(i);
       btn.setAttribute('aria-pressed', String(i === from));
       if (i < from) btn.classList.add('before');
-      if (!onBoard.has(i)) {
+      if (m.point !== null && !onBoard.has(i)) {
         btn.classList.add('gone');
         btn.title = '盤上にありません';
       }
       const num = document.createElement('span');
       num.className = 'mv-n';
-      num.textContent = String(i + 1);
+      num.textContent = String(m.number);
       const icon = document.createElement('span');
       icon.className = `stone-icon ${m.color === BLACK ? 'black' : 'white'}`;
       const pt = document.createElement('span');
       pt.className = 'mv-pt';
-      pt.textContent = pointName(m.x, m.y, board.size, coordStyle);
+      pt.textContent = m.point === null ? 'パス' : pointName(m.point % size, Math.floor(m.point / size), size, coordStyle);
       btn.append(num, icon, pt);
       return btn;
     });
@@ -1032,14 +1060,14 @@ export class GobanApp {
       }),
     );
 
-    const first = numberStyle === 'absolute' ? from + 1 : 1;
-    const last = first + moves.length - from - 1;
+    const first = numberStyle === 'absolute' ? moves[from]?.number : 1;
+    const last = numberStyle === 'absolute' ? moves.at(-1)?.number : moves.length - from;
     status.textContent =
       moves.length === 0
         ? 'まだ石が置かれていません'
         : from >= moves.length
           ? `${moves.length}手 ・ 次の手から番号`
-          : `${moves.length}手 ・ ${from + 1}手目から番号（${first}〜${last}）`;
+          : `${moves.length}手 ・ ${moves[from].number}手目から番号（${first}〜${last}）`;
 
     if (moves.length > this.loggedMoves) list.scrollTop = list.scrollHeight;
     this.loggedMoves = moves.length;

@@ -1,39 +1,57 @@
 import { describe, expect, it } from 'vitest';
-import { BLACK, Board, WHITE } from '../src/board';
-import {
-  deserializeMoves,
-  deserializePoints,
-  moveLabel,
-  movesOnBoard,
-  serializeMoves,
-  serializePoints,
-  stoneNumbers,
-  withoutLastMoveAt,
-  type Move,
-} from '../src/moves';
+import { BLACK, Board, WHITE, type StoneColor } from '../src/board';
+import { moveLabel, movesOnBoard, stoneNumbers } from '../src/moves';
+
+interface M {
+  readonly x: number;
+  readonly y: number;
+  readonly color: StoneColor;
+}
 
 /** moves を順に置いた盤面（captureMode は 'remove'） */
-function play(size: number, moves: Move[]): Board {
+function play(size: number, moves: M[]): Board {
   const b = new Board(size);
   for (const m of moves) expect(b.place(m.x, m.y, m.color, 'remove').ok).toBe(true);
   return b;
 }
 
-const B = (x: number, y: number): Move => ({ x, y, color: BLACK });
-const W = (x: number, y: number): Move => ({ x, y, color: WHITE });
+/** 盤面の手を、経路上の手（交点のインデックスと手数）にする */
+function log(size: number, moves: M[]) {
+  return moves.map((m, i) => ({ point: m.y * size + m.x, color: m.color, number: i + 1 }));
+}
+
+const B = (x: number, y: number): M => ({ x, y, color: BLACK });
+const W = (x: number, y: number): M => ({ x, y, color: WHITE });
 
 describe('着手番号', () => {
   it('起点より前の手には番号を付けない', () => {
-    expect(moveLabel(2, 3, 'relative')).toBeNull();
-    expect(moveLabel(3, 3, 'relative')).toBe(1);
-    expect(moveLabel(5, 3, 'relative')).toBe(3);
-    expect(moveLabel(5, 3, 'absolute')).toBe(6);
+    const moves = log(9, [B(0, 0), B(1, 0), B(2, 0), B(3, 0), B(4, 0), B(5, 0)]);
+    expect(moveLabel(moves, 2, 3, 'relative')).toBeNull();
+    expect(moveLabel(moves, 3, 3, 'relative')).toBe(1);
+    expect(moveLabel(moves, 5, 3, 'relative')).toBe(3);
+    expect(moveLabel(moves, 5, 3, 'absolute')).toBe(6);
+  });
+
+  it('「手数」は手の手数（MN）に従う', () => {
+    const moves = [{ number: 50 }, { number: 51 }];
+    expect(moveLabel(moves, 1, 0, 'absolute')).toBe(51);
+    expect(moveLabel(moves, 1, 0, 'relative')).toBe(2);
+  });
+
+  it('パスは盤上の石に数えない', () => {
+    const b = new Board(9);
+    b.set(0, 0, BLACK);
+    const moves: Array<{ point: number | null; color: StoneColor; number: number }> = [
+      { point: 0, color: BLACK, number: 1 },
+      { point: null, color: WHITE, number: 2 },
+    ];
+    expect(movesOnBoard(b, moves)).toEqual(new Set([0]));
   });
 
   it('盤上の石に番号を付ける', () => {
     const moves = [B(2, 2), W(6, 6), B(2, 6), W(6, 2)];
     const b = play(9, moves);
-    expect(stoneNumbers(b, moves, 0, 'relative')).toEqual(
+    expect(stoneNumbers(b, log(9, moves), 0, 'relative')).toEqual(
       new Map([
         [b.index(2, 2), 1],
         [b.index(6, 6), 2],
@@ -41,26 +59,26 @@ describe('着手番号', () => {
         [b.index(6, 2), 4],
       ]),
     );
-    expect(stoneNumbers(b, moves, 2, 'relative')).toEqual(
+    expect(stoneNumbers(b, log(9, moves), 2, 'relative')).toEqual(
       new Map([
         [b.index(2, 6), 1],
         [b.index(6, 2), 2],
       ]),
     );
-    expect(stoneNumbers(b, moves, 2, 'absolute')).toEqual(
+    expect(stoneNumbers(b, log(9, moves), 2, 'absolute')).toEqual(
       new Map([
         [b.index(2, 6), 3],
         [b.index(6, 2), 4],
       ]),
     );
     // 起点が記録より先なら番号はない
-    expect(stoneNumbers(b, moves, 4, 'relative').size).toBe(0);
+    expect(stoneNumbers(b, log(9, moves), 4, 'relative').size).toBe(0);
   });
 
   it('同色の連打もそのまま番号を付ける', () => {
     const moves = [B(0, 0), B(1, 1), B(2, 2)];
     const b = play(9, moves);
-    expect([...stoneNumbers(b, moves, 0, 'relative').values()]).toEqual([1, 2, 3]);
+    expect([...stoneNumbers(b, log(9, moves), 0, 'relative').values()]).toEqual([1, 2, 3]);
   });
 
   it('取られた石には番号を付けず、同じ交点に打ち直した手の番号を付ける', () => {
@@ -68,10 +86,10 @@ describe('着手番号', () => {
     const moves2 = [W(0, 0), B(1, 0), W(4, 4), B(0, 1)];
     const b2 = play(5, moves2);
     expect(b2.get(0, 0)).toBe(0);
-    expect(movesOnBoard(b2, moves2)).toEqual(new Set([1, 2, 3]));
+    expect(movesOnBoard(b2, log(5, moves2))).toEqual(new Set([1, 2, 3]));
     const moves3 = [...moves2, W(0, 0)];
     b2.place(0, 0, WHITE, 'none');
-    const n = stoneNumbers(b2, moves3, 0, 'relative');
+    const n = stoneNumbers(b2, log(5, moves3), 0, 'relative');
     expect(n.get(b2.index(0, 0))).toBe(5);
     expect([...n.values()].sort()).toEqual([2, 3, 4, 5]);
   });
@@ -79,50 +97,6 @@ describe('着手番号', () => {
   it('記録と色が合わない石には番号を付けない', () => {
     const b = new Board(9);
     b.set(3, 3, WHITE);
-    expect(stoneNumbers(b, [B(3, 3)], 0, 'relative').size).toBe(0);
-  });
-
-  it('最後の手の石を消したときだけ記録から消す', () => {
-    const moves = [B(0, 0), W(1, 1)];
-    expect(withoutLastMoveAt(moves, 1, 1, WHITE)).toEqual([B(0, 0)]);
-    expect(withoutLastMoveAt(moves, 0, 0, BLACK)).toBeNull();
-    expect(withoutLastMoveAt(moves, 1, 1, BLACK)).toBeNull();
-    expect(withoutLastMoveAt([], 1, 1, BLACK)).toBeNull();
-  });
-});
-
-describe('交点の集合の保存形式', () => {
-  it('文字列にして元に戻せる（並びは交点の順）', () => {
-    const size = 19;
-    const pts = new Set([18 * size + 18, 0, 3 * size + 15]);
-    const text = serializePoints(pts, size);
-    expect(text).toBe('aapdss');
-    expect(deserializePoints(size, text)).toEqual(pts);
-    expect(deserializePoints(size, '')).toEqual(new Set());
-  });
-
-  it('不正なら null', () => {
-    expect(deserializePoints(19, 'a')).toBeNull();
-    expect(deserializePoints(9, 'ja')).toBeNull();
-    expect(deserializePoints(19, 'A1')).toBeNull();
-    expect(deserializePoints(19, null)).toBeNull();
-  });
-});
-
-describe('着手の記録の保存形式', () => {
-  it('文字列にして元に戻せる', () => {
-    const moves = [B(0, 0), W(18, 18), B(3, 15), W(24, 0)];
-    const text = serializeMoves(moves);
-    expect(text).toBe('BaaWssBdpWya');
-    expect(deserializeMoves(25, text)).toEqual(moves);
-    expect(deserializeMoves(19, '')).toEqual([]);
-  });
-
-  it('不正なら null', () => {
-    expect(deserializeMoves(19, 'Bt')).toBeNull(); // 長さ
-    expect(deserializeMoves(19, 'Xaa')).toBeNull(); // 色
-    expect(deserializeMoves(19, 'Bta')).toBeNull(); // 盤外
-    expect(deserializeMoves(9, 'Bja')).toBeNull();
-    expect(deserializeMoves(19, 42)).toBeNull();
+    expect(stoneNumbers(b, log(9, [B(3, 3)]), 0, 'relative').size).toBe(0);
   });
 });

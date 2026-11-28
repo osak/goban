@@ -2,8 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { BLACK, WHITE } from '../src/board';
 import { exportCellSize, exportFileName } from '../src/export';
 import { UndoHistory } from '../src/history';
-import { STORAGE_KEY, applySaved, loadState, saveState, type KeyValueStorage } from '../src/persistence';
-import { currentColor, initialState } from '../src/state';
+import {
+  SETTINGS_KEY,
+  STATE_V1_KEY,
+  applySettings,
+  loadSettings,
+  saveSettings,
+  type KeyValueStorage,
+} from '../src/persistence';
+import { currentColor, initialSettings } from '../src/state';
 import { fullView } from '../src/view';
 
 class MemoryStorage implements KeyValueStorage {
@@ -54,91 +61,61 @@ describe('UndoHistory', () => {
 
 describe('状態', () => {
   it('置く石の色', () => {
-    expect(currentColor({ colorMode: 'black', nextColor: WHITE })).toBe(BLACK);
-    expect(currentColor({ colorMode: 'white', nextColor: BLACK })).toBe(WHITE);
-    expect(currentColor({ colorMode: 'alternate', nextColor: WHITE })).toBe(WHITE);
+    expect(currentColor('black', WHITE)).toBe(BLACK);
+    expect(currentColor('white', BLACK)).toBe(WHITE);
+    expect(currentColor('alternate', WHITE)).toBe(WHITE);
   });
 });
 
-describe('保存と復元', () => {
+describe('設定の保存と復元', () => {
   it('保存した内容をそのまま復元できる', () => {
     const storage = new MemoryStorage();
-    const s = initialState(13);
-    s.board.place(3, 3, BLACK, 'remove');
-    s.board.place(9, 9, WHITE, 'remove');
+    const s = initialSettings();
     s.colorMode = 'alternate';
-    s.nextColor = WHITE;
     s.captureMode = 'mark';
     s.coordStyle = 'japanese';
     s.theme = 'print';
-    s.view = { x0: 0, y0: 0, x1: 6, y1: 6 };
-    s.moves = [
-      { x: 3, y: 3, color: BLACK },
-      { x: 9, y: 9, color: WHITE },
-    ];
     s.numbering = true;
-    s.numberFrom = 1;
     s.numberStyle = 'absolute';
     s.labelText = 'あ';
-    saveState(storage, s);
+    s.inheritMarks = false;
+    saveSettings(storage, s);
+    expect(storage.data.has(SETTINGS_KEY)).toBe(true);
 
-    const t = initialState();
-    loadState(storage, t);
-    expect(t.board.equals(s.board)).toBe(true);
-    expect({ ...t, board: null, tool: null }).toEqual({ ...s, board: null, tool: null });
+    const t = initialSettings();
+    loadSettings(storage, t);
+    expect(t).toEqual(s);
   });
 
   it('不正な項目は無視して今の値を残す', () => {
-    const s = initialState();
-    applySaved(s, {
-      size: 7, // 対応していない大きさ
-      stones: '0'.repeat(49),
+    const s = initialSettings();
+    applySettings(s, {
       colorMode: 'red',
-      nextColor: 3,
       captureMode: 'remove',
       coordStyle: 1,
       theme: 'dark',
-      view: { x0: 2 },
-      moves: 'Baa',
       numbering: 'yes',
-      numberFrom: -1,
       numberStyle: 'roman',
       labelText: 'AB',
+      inheritMarks: 0,
     });
-    expect(s.board.size).toBe(19);
-    expect(s.colorMode).toBe('black');
-    expect(s.nextColor).toBe(BLACK);
-    expect(s.coordStyle).toBe('western');
-    expect(s.theme).toBe('wood');
-    expect(s.view).toEqual(fullView(19));
-    expect(s.moves).toEqual([]); // 盤面を読み込まないときは記録も使わない
-    expect(s.numbering).toBe(false);
-    expect(s.numberFrom).toBe(0);
-    expect(s.numberStyle).toBe('relative');
-    expect(s.labelText).toBe('A');
+    expect(s).toEqual(initialSettings());
   });
 
-  it('着手の記録が壊れていたら空にする', () => {
-    const s = initialState();
-    s.moves = [{ x: 0, y: 0, color: BLACK }];
-    applySaved(s, { size: 9, stones: '0'.repeat(81), moves: 'Bzz' });
-    expect(s.board.size).toBe(9);
-    expect(s.moves).toEqual([]);
-  });
-
-  it('盤面が正しければ表示範囲は盤内に直して使う', () => {
-    const s = initialState();
-    applySaved(s, { size: 9, stones: '0'.repeat(81), view: { x0: 5, y0: 5, x1: 30, y1: 6 } });
-    expect(s.board.size).toBe(9);
-    expect(s.view).toEqual({ x0: 5, y0: 4, x1: 8, y1: 6 });
+  it('新しい形式がなければ以前の版の設定を引き継ぐ（盤面の項目は使わない）', () => {
+    const storage = new MemoryStorage();
+    storage.setItem(STATE_V1_KEY, JSON.stringify({ size: 9, stones: '0'.repeat(81), theme: 'print', numbering: true }));
+    const s = initialSettings();
+    loadSettings(storage, s);
+    expect(s).toEqual({ ...initialSettings(), theme: 'print', numbering: true });
   });
 
   it('壊れた JSON や使えない storage でも例外を出さない', () => {
     const storage = new MemoryStorage();
-    storage.setItem(STORAGE_KEY, '{broken');
-    const s = initialState();
-    expect(() => loadState(storage, s)).not.toThrow();
-    expect(() => loadState(null, s)).not.toThrow();
+    storage.setItem(SETTINGS_KEY, '{broken');
+    const s = initialSettings();
+    expect(() => loadSettings(storage, s)).not.toThrow();
+    expect(() => loadSettings(null, s)).not.toThrow();
     const throwing: KeyValueStorage = {
       getItem: () => {
         throw new Error('denied');
@@ -147,8 +124,8 @@ describe('保存と復元', () => {
         throw new Error('quota');
       },
     };
-    expect(() => loadState(throwing, s)).not.toThrow();
-    expect(() => saveState(throwing, s)).not.toThrow();
+    expect(() => loadSettings(throwing, s)).not.toThrow();
+    expect(() => saveSettings(throwing, s)).not.toThrow();
   });
 });
 

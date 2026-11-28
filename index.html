@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#dcb35c">
-  <meta name="description" content="ブラウザで使える碁盤。石を置く・取る・拡大・PNG / SGF 保存ができます。">
+  <meta name="description" content="ブラウザで使える碁盤。石を置く・取る・拡大・PNG / SGF の保存と SGF の読み込みができます。">
   <title>碁盤</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23dcb35c'/%3E%3Cpath d='M8 4v24M16 4v24M24 4v24M4 8h24M4 16h24M4 24h24' stroke='%232a1f0e' stroke-width='1.5'/%3E%3Ccircle cx='16' cy='16' r='5.5' fill='%23111'/%3E%3Ccircle cx='24' cy='8' r='5.5' fill='%23fff' stroke='%23555'/%3E%3C/svg%3E">
 </head>
@@ -106,9 +106,11 @@
           <button type="button" class="btn" id="newBoard" title="空の盤面を作る">新規</button>
           <button type="button" class="btn" id="duplicateBoard" title="今の盤面をコピーする">複製</button>
           <button type="button" class="btn danger" id="deleteBoard" title="今の盤面を削除する">削除</button>
+          <button type="button" class="btn" id="openSgf" title="SGF のファイルを新しい盤面として開く">SGF を開く</button>
+          <input type="file" id="sgfFile" accept=".sgf,application/x-go-sgf" hidden>
         </div>
         <ul class="board-list" id="boardList" aria-label="保存した盤面"></ul>
-        <p class="help">盤面は編集するたびに自動で保存されます（このブラウザの中に保存）。一覧をタップすると切り替えます。</p>
+        <p class="help">盤面は編集するたびに自動で保存されます（このブラウザの中に保存）。一覧をタップすると切り替えます。「SGF を開く」で棋譜のファイルを新しい盤面として開けます（変化を含む棋譜は本線の最後の局面を表示します）。</p>
       </div>
 
       <div class="settings" id="settings" hidden>
@@ -128,6 +130,13 @@
           </div>
         </div>
         <div class="row">
+          <span class="row-label">△と文字</span>
+          <div class="seg" id="inheritMarks" role="group" aria-label="次の手を置いたときの△と文字">
+            <button type="button" data-value="on" title="石を置いても今の△と文字を残す">次の手に残す</button>
+            <button type="button" data-value="off" title="石を置くと△と文字を消す（SGF の印は手ごと）">手ごとに付ける</button>
+          </div>
+        </div>
+        <div class="row">
           <span class="row-label">見た目</span>
           <div class="seg" id="theme" role="group" aria-label="盤の見た目">
             <button type="button" data-value="wood">木目</button>
@@ -140,7 +149,7 @@
         </div>
         <p class="help">
           石のない交点をタップで石を置き、石をタップで取り除きます。「印」を選ぶと、石をタップして△を付けたり外したりできます（ドラッグで続けて付け外しできます）。「文字」を選ぶと、入力欄の 1 文字を石や空いている交点に書けます（同じ文字をもう一度タップで消えます）。黒・白の連打中はドラッグで続けて置けます（石の上から始めると続けて消せます）。
-          PNG は表示中の範囲を座標付きで保存します。SGF は着手の手順（打ち直して今の盤面にならないときは今の配置）と △・文字を保存します。
+          PNG は表示中の範囲を座標付きで保存します。SGF は着手の手順と △・文字を保存します（石を手で消したところや「何もしない」で置いた石も含めて、そのまま保存します）。
           「着手番号」を表示にすると、石を置いた順の番号を石に表示します（ログの手をタップするとその手から番号を付けます）。
         </p>
       </div>
