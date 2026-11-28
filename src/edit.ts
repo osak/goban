@@ -4,7 +4,7 @@
  * 規則（docs/design-sgf-core.md §5・§6）:
  * - 石を置くと、今のノードに子の着手ノードを足してそこへ移る。同じ手の子がすでにあれば、その子へ移るだけにする
  * - 着手ノードには配置のプロパティ（AB / AW / AE / PL）を足さない。必要なら子の配置ノードを作る
- * - 配置ノードをその場で書き換えるのは、子がないときだけにする
+ * - 配置ノードをその場で書き換えるのは、子がないときだけにする（「配置」モードは例外。子があっても今のノードを直す）
  * - 子のノードを作るとき、親の文字（LB）と、盤上に残る石の △（TR）を子にコピーする（設定で切れる）
  */
 
@@ -19,7 +19,7 @@ import {
   trianglesOf,
   type GamePosition,
 } from './game';
-import { composed, decodeSimpleText, encodeText, formatPoint } from './sgf/values';
+import { composed, decodeSimpleText, decodeText, encodeText, formatPoint } from './sgf/values';
 import {
   addChild,
   createNode,
@@ -250,6 +250,62 @@ export function eraseStone(
   const props: Array<[string, string[]]> = [['AE', [pointValue(point, size)]]];
   if (alternate) props.push(['PL', [color === BLACK ? 'B' : 'W']]);
   return addChildNode(doc, createNode(props), positionOf, options);
+}
+
+/**
+ * 「配置」モードで、交点 point を value（EMPTY なら空点）にする。盤がもうその状態なら null。
+ * - 今のノードが配置ノード（根を含む）なら、子があってもそのノードの AB / AW / AE を直す。
+ *   その先の局面もすべて変わる（詰碁の問題図を根に作り、正解・失敗を変化にする、など）
+ * - 今のノードが着手ノードなら、子の配置ノードを足してそこへ移る（着手ノードに配置のプロパティを混ぜない）
+ * 直すときは、親の局面と同じになる点はノードから外す（AE も含めて、余計な点を残さない）
+ */
+export function setSetupPoint(
+  doc: Doc,
+  positionOf: PositionOf,
+  point: number,
+  value: StoneColor | typeof EMPTY,
+  options: EditOptions,
+): Doc | null {
+  const size = docSize(doc);
+  if (positionOf(docNodes(doc)).board.grid[point] === value) return null;
+  let next = doc;
+  if (isMoveNode(cursorNode(doc), size)) next = addChildNode(doc, createNode([]), positionOf, options);
+  const nodes = docNodes(next);
+  const parentBoard = next.cursor.length > 0 ? positionOf(nodes.slice(0, -1)).board : new Board(size);
+  const before = parentBoard.grid[point];
+  return updateCursor(next, (n) => {
+    let out = n;
+    const s = setupOf(out, size);
+    const lists = { AB: s.black, AW: s.white, AE: s.empty } as const;
+    const want = before === value ? null : value === EMPTY ? 'AE' : value === BLACK ? 'AB' : 'AW';
+    for (const ident of ['AB', 'AW', 'AE'] as const) {
+      const list = lists[ident].filter((i) => i !== point);
+      if (ident === want) list.push(point);
+      if (list.length !== lists[ident].length || ident === want) out = setProp(out, ident, pointValues(list, size));
+    }
+    if (value === EMPTY) {
+      const tr = trianglesOf(out, size);
+      if (tr.delete(point)) out = setProp(out, 'TR', pointValues(tr, size));
+    }
+    // 取りなしの着手の印が残っていると、1 点だけになったときに着手とみなされてしまう
+    if (out.props.has(CAPTURELESS_MOVE)) out = setProp(out, CAPTURELESS_MOVE, null);
+    return out;
+  });
+}
+
+/** 今のノードのコメント（C）。なければ '' */
+export function commentAt(doc: Doc): string {
+  const raw = getValue(cursorNode(doc), 'C');
+  return raw === undefined ? '' : decodeText(raw);
+}
+
+/** 今のノードのコメントを text にする（空白だけなら C を消す） */
+export function setComment(doc: Doc, text: string): Doc {
+  const value = text.trim() === '' ? null : [encodeText(text)];
+  const node = cursorNode(doc);
+  const cur = node.props.get('C');
+  if (value === null ? cur === undefined : cur !== undefined && cur.length === 1 && cur[0] === value[0]) return doc;
+  return updateCursor(doc, (n) => setProp(n, 'C', value));
 }
 
 /** 今のノードの △ を付ける（on が false なら外す） */

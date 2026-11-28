@@ -289,6 +289,13 @@ button {
   gap: 6px;
 }
 
+/* 狭い画面では「取り消し」「やり直し」が入らないので 2 段にする */
+@media (max-width: 479px) {
+  .toolbar {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
 .tool-btn {
   display: flex;
   flex-direction: column;
@@ -784,6 +791,88 @@ button {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+/* ツリー・コメントの開け閉め */
+.nav-btn.nav-toggle {
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.nav-btn.nav-toggle svg path:last-child {
+  fill: none;
+}
+
+.nav-btn.nav-toggle[aria-expanded="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+/* 今の局面にコメントがある */
+.nav-btn.has-comment::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--panel);
+}
+
+.nav-btn.has-comment[aria-expanded="true"]::after {
+  background: var(--accent-text);
+  box-shadow: none;
+}
+
+/* ツリー全体。見えている部分だけを canvas に描き、スクロールに合わせて動かす */
+.tree-box {
+  position: relative;
+  max-height: 150px;
+  overflow: auto;
+  background: var(--seg-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overscroll-behavior: contain;
+  cursor: pointer;
+}
+
+.tree-spacer {
+  pointer-events: none;
+}
+
+.tree-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.comment-text {
+  display: block;
+  width: 100%;
+  min-height: 4.5em;
+  max-height: 40vh;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* コメントのある手 */
+.movelog-list button.has-comment::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .noscript {

@@ -3,11 +3,13 @@
  *
  * 盤面の内容はゲームツリー（edit.ts の Doc）だけに持ち、表示する局面はそこから導出する（game.ts）。
  * 手順の移動（nav.ts）はツリーを変えないので、元に戻すの履歴に積まない。
+ * コメントの入力は、打ち始めてから欄を離れる（ほかの操作をする）までを 1 回の編集として積む。
  */
 
 import { BLACK, Board, CAPTURE_MODES, EMPTY, type StoneColor } from './board';
 import { COORD_STYLES, pointName } from './coords';
 import {
+  commentAt,
   docName,
   docNodes,
   eraseStone,
@@ -21,7 +23,9 @@ import {
   renameDoc,
   resetDoc,
   setLabel,
+  setComment,
   setNumberStartHere,
+  setSetupPoint,
   setTriangle,
   toggleTurn,
   trianglesAt,
@@ -70,7 +74,9 @@ import { getStorage, loadSettings, saveSettings } from './persistence';
 import { THEME_NAMES, draw, drawThumbnail, type Candidate } from './renderer';
 import { exportSgf, importSgfBytes } from './sgf-file';
 import { BOARD_SIZES, CANDIDATE_MODES, COLOR_MODES, currentColor, initialState, type AppState, type Tool } from './state';
-import { extendPath, getProp, nodesOnPath, setProp, type NodePath } from './tree';
+import { extendPath, getProp, nodesOnPath, setProp, type NodePath, type SgfNode } from './tree';
+import { indicesOnPath, layoutTree, pathOfIndex, type TreeLayout } from './tree-layout';
+import { TreeView } from './tree-view';
 import { fullView, isFullView, normalizeView, viewAround, viewFromPoints, type Point, type View } from './view';
 
 /** ドラッグ中に交点に「触れた」とみなす距離（マス単位） */
@@ -89,8 +95,8 @@ interface ScreenLayout extends Layout {
 interface Stroke {
   readonly pointerId: number;
   readonly before: Doc;
-  /** 石を置く / 石を消す / △を付ける / △を外す / 文字を書く・消す */
-  readonly action: 'place' | 'erase' | 'mark' | 'unmark' | 'label';
+  /** 石を置く / 石を消す / △を付ける / △を外す / 文字を書く・消す / 配置で石を置く / 配置で石を消す */
+  readonly action: 'place' | 'erase' | 'mark' | 'unmark' | 'label' | 'setup' | 'unsetup';
   readonly color: StoneColor;
   /** ドラッグで続けて置ける／消せるか（同色連打と△の付け外しのとき） */
   readonly drag: boolean;
@@ -191,6 +197,7 @@ export class GobanApp {
     nextColorIcon: byId('nextColorIcon', HTMLElement),
     nextColorText: byId('nextColorText', HTMLElement),
     labelText: byId('labelText', HTMLInputElement),
+    setupMode: byId('setupMode', HTMLButtonElement),
     zoomHint: byId('zoomHint', HTMLElement),
     moveLog: byId('moveLog', HTMLElement),
     moveLogStatus: byId('moveLogStatus', HTMLElement),
@@ -203,6 +210,12 @@ export class GobanApp {
     navPos: byId('navPos', HTMLElement),
     variationsBtn: byId('variationsBtn', HTMLButtonElement),
     deleteFrom: byId('deleteFrom', HTMLButtonElement),
+    treeBtn: byId('treeBtn', HTMLButtonElement),
+    commentBtn: byId('commentBtn', HTMLButtonElement),
+    tree: byId('tree', HTMLElement),
+    treeBox: byId('treeBox', HTMLElement),
+    comment: byId('comment', HTMLElement),
+    commentText: byId('commentText', HTMLTextAreaElement),
     variations: byId('variations', HTMLElement),
     variationsTitle: byId('variationsTitle', HTMLElement),
     variationList: byId('variationList', HTMLOListElement),
@@ -223,11 +236,20 @@ export class GobanApp {
   private loggedCursor = '';
   /** 変化の一覧を開いているか */
   private variationsOpen = false;
+  /** ツリー全体の表示 */
+  private readonly treeView: TreeView;
+  /** ツリーの配置（根が変わったら求め直す） */
+  private treeLayout: { root: SgfNode; layout: TreeLayout } | null = null;
+  /** コメントを打ち始めたときの doc（まだ履歴に積んでいない入力があるとき） */
+  private commentBefore: Doc | null = null;
+  /** コメントの欄に出しているノードの id */
+  private commentNodeId = -1;
 
   constructor() {
     const ctx = this.canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D が使えません');
     this.ctx = ctx;
+    this.treeView = new TreeView(this.ui.treeBox, (index) => this.goToTreeNode(index));
   }
 
   start(): void {
@@ -396,14 +418,23 @@ export class GobanApp {
     this.changed();
   }
 
+  /** まだ履歴に積んでいないコメントの入力を、1 回の編集として積む */
+  private flushComment(): void {
+    const before = this.commentBefore;
+    this.commentBefore = null;
+    if (before && before.root !== this.doc.root) this.history.record(before);
+  }
+
   private undo(): void {
     if (this.stroke) return;
+    this.flushComment();
     const prev = this.history.undo(this.doc);
     if (prev) this.restore(prev);
   }
 
   private redo(): void {
     if (this.stroke) return;
+    this.flushComment();
     const next = this.history.redo(this.doc);
     if (next) this.restore(next);
   }
@@ -484,6 +515,7 @@ export class GobanApp {
     if (this.stroke || id === this.currentId) return;
     const entry = this.entries.find((e) => e.id === id);
     if (!entry) return;
+    this.flushComment();
     this.syncCurrentEntry();
     this.currentId = id;
     this.openEntry(entry);
@@ -658,12 +690,15 @@ export class GobanApp {
     if (!p) return;
     e.preventDefault();
     this.capturePointer(e);
+    this.flushComment();
 
     const board = this.pos.board;
     const i = board.index(p.x, p.y);
     const marking = state.tool === 'mark';
     const labeling = state.tool === 'label';
+    const setup = state.tool === 'stone' && state.setupMode;
     if (marking && board.grid[i] === EMPTY) return; // △は石にだけ付ける
+    const empty = board.grid[i] === EMPTY; // 「△マーク」の△（取られた石）の点は空点なので、そのまま打てる
     const stroke: Stroke = {
       pointerId: e.pointerId,
       before: this.doc,
@@ -673,11 +708,16 @@ export class GobanApp {
           ? trianglesAt(this.doc).has(i)
             ? 'unmark'
             : 'mark'
-          : board.grid[i] === EMPTY // 「△マーク」の△（取られた石）の点は空点なので、そのまま打てる
-            ? 'place'
-            : 'erase',
+          : setup
+            ? empty
+              ? 'setup'
+              : 'unsetup'
+            : empty
+              ? 'place'
+              : 'erase',
       color: this.placeColor(),
-      drag: marking || (!labeling && state.colorMode !== 'alternate'),
+      // 配置は手番を変えないので、交互でもドラッグで続けて置ける
+      drag: marking || setup || (!labeling && state.colorMode !== 'alternate'),
       last: pt,
       visited: new Set([i]),
     };
@@ -691,6 +731,8 @@ export class GobanApp {
       this.setDoc(setTriangle(this.doc, i, stroke.action === 'mark'));
     } else if (stroke.action === 'place') {
       if (this.placeAt(i, stroke.color) === 'suicide') this.toast('そこには置けません（呼吸点がありません）');
+    } else if (stroke.action === 'setup' || stroke.action === 'unsetup') {
+      this.setupAt(i, stroke.action === 'setup' ? stroke.color : EMPTY);
     } else {
       this.eraseAt(i);
     }
@@ -729,6 +771,10 @@ export class GobanApp {
             if (board.grid[i] !== EMPTY) this.setDoc(setTriangle(this.doc, i, stroke.action === 'mark'));
           } else if (stroke.action === 'place') {
             if (board.grid[i] === EMPTY) this.placeAt(i, stroke.color);
+          } else if (stroke.action === 'setup') {
+            if (board.grid[i] === EMPTY) this.setupAt(i, stroke.color);
+          } else if (stroke.action === 'unsetup') {
+            if (board.grid[i] !== EMPTY) this.setupAt(i, EMPTY);
           } else {
             this.eraseAt(i);
           }
@@ -796,6 +842,12 @@ export class GobanApp {
     return true;
   }
 
+  /** 「配置」モードで交点 i を value（EMPTY なら空点）にする */
+  private setupAt(i: number, value: StoneColor | typeof EMPTY): void {
+    const doc = setSetupPoint(this.doc, this.positionOf, i, value, this.editOptions);
+    if (doc) this.setDoc(doc);
+  }
+
   private finishStroke(): void {
     const stroke = this.stroke;
     if (!stroke) return;
@@ -812,6 +864,7 @@ export class GobanApp {
 
   /** 記録を変える操作（ツリーが変わったら元に戻せる）。doc が変わらなければ何もしない */
   private edit(doc: Doc, line?: NodePath): void {
+    this.flushComment();
     if (sameDoc(doc, this.doc) && (line === undefined || samePath(line, this.line))) return;
     if (doc.root !== this.doc.root) this.history.record(this.doc);
     this.setDoc(doc, line);
@@ -821,6 +874,7 @@ export class GobanApp {
   /** 手順を移動する（ツリーは変えない。履歴にも積まない）。nav が null なら何もしない */
   private navigate(nav: Nav | null): void {
     if (this.stroke || !nav) return;
+    this.flushComment();
     const moved = !samePath(nav.cursor, this.doc.cursor);
     if (!moved && samePath(nav.line, this.line)) return;
     // 手番の一時的な入れ替えは、ノードを移ったら消す
@@ -831,6 +885,34 @@ export class GobanApp {
 
   private get nav(): Nav {
     return { cursor: this.doc.cursor, line: this.line };
+  }
+
+  /** ツリーの表示でタップしたノードへ移る。今の手順がそのノードを通るなら手順は保つ */
+  private goToTreeNode(index: number): void {
+    const layout = this.treeLayout?.layout;
+    if (!layout || this.stroke) return;
+    const cursor = pathOfIndex(layout, index);
+    const line = lineAfterEdit(this.doc.root, cursor, { line: this.line, endId: lineEndId(this.doc.root, this.line) });
+    this.navigate({ cursor, line });
+  }
+
+  /** ツリーの配置（根が変わったときだけ求め直す） */
+  private currentTreeLayout(): TreeLayout {
+    const cached = this.treeLayout;
+    if (cached && cached.root === this.doc.root) return cached.layout;
+    const layout = layoutTree(this.doc.root, this.pos.size);
+    this.treeLayout = { root: this.doc.root, layout };
+    return layout;
+  }
+
+  /** コメントの入力を今のノードに反映する（履歴には、欄を離れるかほかの操作をしたときに積む） */
+  private inputComment(text: string): void {
+    if (this.stroke) return;
+    const doc = setComment(this.doc, text);
+    if (doc === this.doc) return;
+    this.commentBefore ??= this.doc;
+    this.setDoc(doc);
+    this.changed();
   }
 
   /** 今の分かれ目で、変化を index 番目にする */
@@ -1083,6 +1165,28 @@ export class GobanApp {
       if (e.key === 'Enter' && !e.isComposing) ui.labelText.blur();
     });
 
+    // 「配置」: 石を今のノードの配置として置く・消す
+    ui.setupMode.addEventListener('click', () => {
+      state.setupMode = !state.setupMode;
+      if (state.tool !== 'stone') this.setTool('stone');
+      settingChanged();
+    });
+    ui.treeBtn.addEventListener('click', () => {
+      state.showTree = !state.showTree;
+      this.changed();
+      if (state.showTree) this.treeView.reveal();
+    });
+    ui.commentBtn.addEventListener('click', () => {
+      state.showComment = !state.showComment;
+      this.changed();
+      if (state.showComment) ui.commentText.focus();
+    });
+    ui.commentText.addEventListener('input', () => this.inputComment(ui.commentText.value));
+    ui.commentText.addEventListener('blur', () => {
+      this.flushComment();
+      this.updateUI();
+    });
+
     // 今のノードが配置ノードなら PL に書き（元に戻せる）、着手ノードなら一時的に入れ替える
     ui.nextColor.addEventListener('click', () => {
       if (!this.stroke) this.edit(toggleTurn(this.doc, this.pos));
@@ -1128,7 +1232,8 @@ export class GobanApp {
 
   private bindKeyboard(): void {
     document.addEventListener('keydown', (e) => {
-      if (e.target instanceof HTMLInputElement) return; // 名前の入力中は文字の取り消しに使う
+      // 名前・コメントの入力中は、文字の取り消しやカーソルの移動に使う
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       if (mod && !e.altKey && key === 'z') {
@@ -1164,6 +1269,8 @@ export class GobanApp {
     const black = this.nextColor() === BLACK;
     ui.nextColor.hidden = state.colorMode !== 'alternate' || state.tool === 'mark' || state.tool === 'label';
     ui.labelText.hidden = state.tool !== 'label';
+    ui.setupMode.hidden = state.tool !== 'stone';
+    ui.setupMode.setAttribute('aria-pressed', String(state.setupMode));
     if (document.activeElement !== ui.labelText) ui.labelText.value = state.labelText;
     ui.nextColorIcon.className = `stone-icon ${black ? 'black' : 'white'}`;
     ui.nextColorText.textContent = black ? '黒' : '白';
@@ -1174,10 +1281,40 @@ export class GobanApp {
     ui.zoomHint.hidden = state.tool !== 'zoom';
     const lineMoveList = lineMoves(nodesOnPath(this.doc.root, this.line) ?? [], this.pos.size);
     this.updateNav(lineMoveList);
+    this.updateTree();
+    this.updateComment();
     ui.moveLog.hidden = !state.numbering;
     if (state.numbering) this.updateMoveLog(lineMoveList);
     this.updateBoardList();
     this.updateTitle();
+  }
+
+  /** ツリー全体の表示を今の状態に合わせる */
+  private updateTree(): void {
+    const { ui, state } = this;
+    ui.treeBtn.setAttribute('aria-expanded', String(state.showTree));
+    ui.tree.hidden = !state.showTree;
+    if (!state.showTree) return;
+    const layout = this.currentTreeLayout();
+    const line = indicesOnPath(layout, this.doc.root, this.line);
+    this.treeView.update({ layout, current: line[this.doc.cursor.length] ?? 0, line: new Set(line) });
+  }
+
+  /** コメントの欄を今のノードに合わせる（入力中は、今のノードが変わったときだけ書き換える） */
+  private updateComment(): void {
+    const { ui, state } = this;
+    const node = cursorNode(this.doc);
+    const has = node.props.has('C');
+    ui.commentBtn.setAttribute('aria-expanded', String(state.showComment));
+    ui.commentBtn.classList.toggle('has-comment', has);
+    ui.commentBtn.title = has ? 'この局面のコメント（あり）' : 'この局面のコメント';
+    ui.comment.hidden = !state.showComment;
+    if (node.id !== this.commentNodeId || document.activeElement !== ui.commentText) {
+      this.commentNodeId = node.id;
+      const text = commentAt(this.doc);
+      if (ui.commentText.value !== text) ui.commentText.value = text;
+    }
+    ui.commentText.placeholder = this.doc.cursor.length === 0 ? '最初の局面のコメント（問題の説明など）' : 'この局面のコメント';
   }
 
   /** 手順の移動のボタンと、変化の一覧を今の状態に合わせる。lineMoveList は今の手順の着手 */
@@ -1247,6 +1384,9 @@ export class GobanApp {
     const { moves, numberFrom, size } = this.pos;
     const { moveLogStatus: status, moveLogList: list, numberHere } = this.ui;
     const onBoard = movesOnBoard(this.displayBoard(), moves);
+    const commented = new Set(
+      (nodesOnPath(this.doc.root, this.line) ?? []).filter((n) => n.props.has('C')).map((n) => n.id),
+    );
     const here = moves.length; // 今の局面までの手の数（今の手順の先頭からこの数だけ）
     const from = Math.min(numberFrom, here);
 
@@ -1267,6 +1407,7 @@ export class GobanApp {
       if (i >= here) btn.classList.add('after');
       else if (i < from) btn.classList.add('before');
       if (i === from && from < here) btn.classList.add('from');
+      if (commented.has(m.nodeId)) btn.classList.add('has-comment');
       if (i < here && m.point !== null && !onBoard.has(i)) {
         btn.classList.add('gone');
         btn.title = '盤上にありません';

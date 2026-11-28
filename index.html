@@ -27,6 +27,7 @@
           <button type="button" data-value="mark" title="石をタップして△を付ける・外す"><span class="mark-icon" aria-hidden="true">△</span>印</button>
           <button type="button" data-value="label" title="交点をタップして文字を書く・消す"><span class="mark-icon" aria-hidden="true">A</span>文字</button>
         </div>
+        <button type="button" class="chip" id="setupMode" aria-pressed="false" title="石を手ではなく、今の局面の配置として置く・消す（手番も番号も変わりません）">配置</button>
         <input type="text" class="text-input label-input" id="labelText" hidden autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" aria-label="交点に書く文字（1 文字）" title="交点に書く文字（1 文字）。空にするとタップで文字を消します" placeholder="消す">
         <button type="button" class="chip" id="nextColor" hidden title="次の手番を入れ替える">
           次: <span class="stone-icon black" id="nextColorIcon"></span><span id="nextColorText">黒</span>
@@ -81,6 +82,12 @@
         </div>
         <div class="nav-group">
         <button type="button" class="nav-var" id="variationsBtn" aria-expanded="false" aria-controls="variations" title="変化の一覧（↑ ↓ で切り替え）">変化</button>
+        <button type="button" class="nav-btn nav-toggle" id="treeBtn" aria-expanded="false" aria-controls="tree" title="ツリー全体を表示" aria-label="ツリー">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="6" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="14" r="2"/><path d="M7 6h3M14 6h3M12 8l5 5"/></svg>
+        </button>
+        <button type="button" class="nav-btn nav-toggle" id="commentBtn" aria-expanded="false" aria-controls="comment" title="この局面のコメント" aria-label="コメント">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H10l-5 4v-4H4z"/></svg>
+        </button>
         <button type="button" class="nav-btn danger" id="deleteFrom" title="今の手から先を削除" aria-label="今の手から先を削除">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
         </button>
@@ -94,6 +101,14 @@
           <button type="button" class="btn" id="promoteVariation" title="選んでいる変化までの手順を本線にする">本線にする</button>
           <button type="button" class="btn danger" id="deleteVariation" title="選んでいる変化を削除する">この変化を削除</button>
         </div>
+      </section>
+
+      <section class="tree" id="tree" aria-label="ツリー全体" hidden>
+        <div class="tree-box" id="treeBox"></div>
+      </section>
+
+      <section class="comment" id="comment" aria-label="コメント" hidden>
+        <textarea class="comment-text" id="commentText" rows="3" maxlength="10000" aria-label="この局面のコメント"></textarea>
       </section>
 
       <div class="toolbar">
@@ -194,6 +209,8 @@
           PNG は表示中の範囲を座標付きで保存します。SGF は着手の手順と △・文字を保存します（石を手で消したところや「何もしない」で置いた石も含めて、そのまま保存します）。
           「着手番号」を表示にすると、石を置いた順の番号を石に表示します。
           変化: 手のある所に戻って別の手を打つと変化になります。◀ ▶（← →）で手順を前後に動かし、「変化」（↑ ↓）で変化を切り替えます。盤の A・B… は次の手の候補で、タップするとその手へ進みます。手をタップしても、その手に続きがあるときは消さずに 1 手前へ戻ります（消すときはごみ箱のボタン）。「取り消し」「やり直し」は編集を戻すもので、手順の移動は戻しません。
+          ツリーのボタンでツリー全体を表示します（丸は手、四角は配置、青い点はコメント）。ノードをタップするとその局面へ移ります。吹き出しのボタンで、今の局面のコメントを書けます（SGF の C として保存します）。
+          「配置」を押すと、石を手ではなく今の局面の配置として置き・消しします。詰碁の問題図を最初の局面に作り、正解や失敗の手順を変化として打つときに使います。今の局面が手のときは、その後に配置の局面を作ります。最初の局面などの配置を直すと、その後の局面もすべて変わります。
         </p>
       </div>
     </aside>
