@@ -533,6 +533,7 @@ button {
   margin: 0;
   padding: 6px;
   list-style: none;
+  position: relative; /* 今の手までスクロールするときの offsetTop の基準 */
   max-height: min(9.5em, 22vh);
   overflow-y: auto;
   background: var(--seg-bg);
@@ -575,19 +576,214 @@ button {
   text-decoration: line-through;
 }
 
-.movelog-list button[aria-pressed="true"] {
+.movelog-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 今の手（今のノードの局面の最後の手） */
+.movelog-list button[aria-current="step"] {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
   opacity: 1;
 }
 
-.movelog-list button[aria-pressed="true"] .mv-n {
+.movelog-list button[aria-current="step"] .mv-n {
   color: inherit;
 }
 
-.movelog-list button.next {
+/* 今の手より先の手（今の手順の続き） */
+.movelog-list button.after {
   border-style: dashed;
+  opacity: 0.55;
+}
+
+/* 番号を付け始める手 */
+.movelog-list button.from {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.movelog-list button.start {
+  padding: 2px 8px;
+}
+
+/* 分かれ目（変化の数）。タップすると変化の一覧を開く */
+.movelog-list button.mv-fork {
+  min-height: 22px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--accent);
+  border-color: currentColor;
+  opacity: 1;
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---------- 手順の移動と変化 ---------- */
+
+/* 幅が足りなければ、移動のボタンと変化のボタンを 2 段にする */
+.navbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.nav-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+}
+
+.nav-group .nav-btn {
+  flex: 1 1 0;
+}
+
+.nav-group .nav-var {
+  flex: 1 1 auto;
+}
+
+.nav-btn,
+.nav-var {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 38px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.nav-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.nav-btn:not(.danger) svg path:last-child {
+  fill: currentColor;
+}
+
+.nav-btn.danger {
+  flex: 0 0 auto;
+  color: var(--danger);
+}
+
+.nav-btn:hover:not(:disabled),
+.nav-var:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.nav-btn:disabled,
+.nav-var:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.nav-var {
+  font-size: 13px;
+}
+
+.nav-var[aria-expanded="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.nav-pos {
+  flex: 0 0 auto;
+  min-width: 3.6em;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.variations {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--seg-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.variations-head {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.variation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: min(14em, 30vh);
+  overflow-y: auto;
+}
+
+.variation-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  text-align: left;
+  cursor: pointer;
+}
+
+.variation-list button:hover {
+  background: var(--hover);
+}
+
+.variation-list button[aria-current="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.variation-list .var-letter {
+  min-width: 1.4em;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.variation-list .var-len {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.variations-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .noscript {

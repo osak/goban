@@ -8,7 +8,7 @@ import { COORD_STYLES } from './coords';
 import { isLabelText } from './labels';
 import { NUMBER_STYLES } from './moves';
 import { THEME_NAMES } from './renderer';
-import { COLOR_MODES, type Settings } from './state';
+import { CANDIDATE_MODES, COLOR_MODES, type Settings } from './state';
 
 export const SETTINGS_KEY = 'goban.settings.v2';
 /** 以前の版の保存データ（設定と今の盤面）。設定を引き継ぐときに読む。消さずに残す */
@@ -41,6 +41,7 @@ export function applySettings(settings: Settings, data: unknown): void {
   if (oneOf(NUMBER_STYLES, d.numberStyle)) settings.numberStyle = d.numberStyle;
   if (d.labelText === '' || isLabelText(d.labelText)) settings.labelText = d.labelText;
   if (typeof d.inheritMarks === 'boolean') settings.inheritMarks = d.inheritMarks;
+  if (oneOf(CANDIDATE_MODES, d.candidates)) settings.candidates = d.candidates;
 }
 
 export function toSavedSettings(s: Settings): Settings {
@@ -53,6 +54,7 @@ export function toSavedSettings(s: Settings): Settings {
     numberStyle: s.numberStyle,
     labelText: s.labelText,
     inheritMarks: s.inheritMarks,
+    candidates: s.candidates,
   };
 }
 

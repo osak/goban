@@ -53,23 +53,57 @@
       <section class="movelog" id="moveLog" aria-label="着手のログ" hidden>
         <div class="movelog-head">
           <span class="movelog-status" id="moveLogStatus"></span>
+          <button type="button" class="chip" id="numberHere" aria-pressed="false" title="今の手より後の手から番号を付ける（もう一度押すと最初の手から）">ここから番号</button>
           <div class="seg seg-small" id="numberStyle" role="group" aria-label="番号の付け方">
             <button type="button" data-value="relative" title="起点の手を 1 として番号を付ける">1から</button>
             <button type="button" data-value="absolute" title="何手目かをそのまま番号にする">手数</button>
           </div>
         </div>
         <ol class="movelog-list" id="moveLogList"></ol>
-        <p class="help">手をタップすると、その手から番号を付けます。「次の手から」でこれから置く石だけに番号を付けます。</p>
+        <p class="help">手をタップするとその手へ移ります。今の手より先の手は薄く表示します。数字の印（2/3 など）は分かれ目で、タップすると変化を選べます。「ここから番号」で、今の手より後の手から番号を付けます。</p>
+      </section>
+
+      <div class="navbar">
+        <div class="nav-group" role="group" aria-label="手順の移動">
+        <button type="button" class="nav-btn" id="navFirst" title="最初へ (Home)" aria-label="最初へ">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14"/><path d="M18 5 9 12l9 7z"/></svg>
+        </button>
+        <button type="button" class="nav-btn" id="navPrev" title="前の手へ (←)" aria-label="前の手へ">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5 7 12l9 7z"/></svg>
+        </button>
+        <span class="nav-pos" id="navPos" title="今の手数 / この手順の手数"></span>
+        <button type="button" class="nav-btn" id="navNext" title="次の手へ (→)" aria-label="次の手へ">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 9 7-9 7z"/></svg>
+        </button>
+        <button type="button" class="nav-btn" id="navLast" title="最後へ (End)" aria-label="最後へ">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14"/><path d="m6 5 9 7-9 7z"/></svg>
+        </button>
+        </div>
+        <div class="nav-group">
+        <button type="button" class="nav-var" id="variationsBtn" aria-expanded="false" aria-controls="variations" title="変化の一覧（↑ ↓ で切り替え）">変化</button>
+        <button type="button" class="nav-btn danger" id="deleteFrom" title="今の手から先を削除" aria-label="今の手から先を削除">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+        </button>
+        </div>
+      </div>
+
+      <section class="variations" id="variations" aria-label="変化の一覧" hidden>
+        <div class="variations-head" id="variationsTitle"></div>
+        <ol class="variation-list" id="variationList"></ol>
+        <div class="variations-actions">
+          <button type="button" class="btn" id="promoteVariation" title="選んでいる変化までの手順を本線にする">本線にする</button>
+          <button type="button" class="btn danger" id="deleteVariation" title="選んでいる変化を削除する">この変化を削除</button>
+        </div>
       </section>
 
       <div class="toolbar">
-        <button type="button" class="tool-btn" id="undo" title="元に戻す (Ctrl+Z)">
+        <button type="button" class="tool-btn" id="undo" title="直前の編集を取り消す (Ctrl+Z)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
-          <span>戻す</span>
+          <span>取り消し</span>
         </button>
-        <button type="button" class="tool-btn" id="redo" title="やり直す (Ctrl+Y)">
+        <button type="button" class="tool-btn" id="redo" title="取り消した編集をやり直す (Ctrl+Y)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
-          <span>進む</span>
+          <span>やり直し</span>
         </button>
         <button type="button" class="tool-btn" id="zoomBtn" aria-pressed="false" title="ドラッグした範囲を拡大">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
@@ -110,7 +144,7 @@
           <input type="file" id="sgfFile" accept=".sgf,application/x-go-sgf" hidden>
         </div>
         <ul class="board-list" id="boardList" aria-label="保存した盤面"></ul>
-        <p class="help">盤面は編集するたびに自動で保存されます（このブラウザの中に保存）。一覧をタップすると切り替えます。「SGF を開く」で棋譜のファイルを新しい盤面として開けます（変化を含む棋譜は本線の最後の局面を表示します）。</p>
+        <p class="help">盤面は編集するたびに自動で保存されます（このブラウザの中に保存）。一覧をタップすると切り替えます。「SGF を開く」で棋譜のファイルを新しい盤面として開けます（本線の最後の局面を表示します）。</p>
       </div>
 
       <div class="settings" id="settings" hidden>
@@ -137,6 +171,14 @@
           </div>
         </div>
         <div class="row">
+          <span class="row-label">次の手の候補</span>
+          <div class="seg" id="candidates" role="group" aria-label="次の手の候補を盤に出すか">
+            <button type="button" data-value="off">表示しない</button>
+            <button type="button" data-value="branch" title="変化があるときだけ、次の手を A・B… で表示する">変化だけ</button>
+            <button type="button" data-value="all" title="次の手があればいつも表示する">いつも</button>
+          </div>
+        </div>
+        <div class="row">
           <span class="row-label">見た目</span>
           <div class="seg" id="theme" role="group" aria-label="盤の見た目">
             <button type="button" data-value="wood">木目</button>
@@ -150,7 +192,8 @@
         <p class="help">
           石のない交点をタップで石を置き、石をタップで取り除きます。「印」を選ぶと、石をタップして△を付けたり外したりできます（ドラッグで続けて付け外しできます）。「文字」を選ぶと、入力欄の 1 文字を石や空いている交点に書けます（同じ文字をもう一度タップで消えます）。黒・白の連打中はドラッグで続けて置けます（石の上から始めると続けて消せます）。
           PNG は表示中の範囲を座標付きで保存します。SGF は着手の手順と △・文字を保存します（石を手で消したところや「何もしない」で置いた石も含めて、そのまま保存します）。
-          「着手番号」を表示にすると、石を置いた順の番号を石に表示します（ログの手をタップするとその手から番号を付けます）。
+          「着手番号」を表示にすると、石を置いた順の番号を石に表示します。
+          変化: 手のある所に戻って別の手を打つと変化になります。◀ ▶（← →）で手順を前後に動かし、「変化」（↑ ↓）で変化を切り替えます。盤の A・B… は次の手の候補で、タップするとその手へ進みます。手をタップしても、その手に続きがあるときは消さずに 1 手前へ戻ります（消すときはごみ箱のボタン）。「取り消し」「やり直し」は編集を戻すもので、手順の移動は戻しません。
         </p>
       </div>
     </aside>

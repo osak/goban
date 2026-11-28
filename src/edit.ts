@@ -283,21 +283,23 @@ export function trianglesAt(doc: Doc): Set<number> {
 }
 
 /**
- * 番号の起点を決める。moveIndex は pos.moves の中の位置で、その手から番号を付ける。
- * pos.moves.length 以上なら、これから置く手から番号を付ける（今のノードに GBNS）。
- * 経路上のほかの GBNS は外す。
+ * 今のノードより後の手から番号を付ける（on が false なら、最初の手から付ける）。
+ * line は今のノードを通る今の手順で、その上のほかの GBNS は外す（手順の先へ進んでも番号の付き方が変わらない）
  */
-export function setNumberStart(doc: Doc, pos: GamePosition, moveIndex: number): Doc {
-  const depth = moveIndex >= pos.moves.length ? doc.cursor.length : pos.moves[moveIndex].depth - 1;
+export function setNumberStartHere(doc: Doc, line: NodePath, on: boolean): Doc {
+  const nodes = nodesOnPath(doc.root, line);
+  if (!nodes || doc.cursor.some((k, i) => k !== line[i])) throw new RangeError('line must pass through the cursor');
   let root = doc.root;
-  const nodes = docNodes(doc);
   for (let d = 0; d < nodes.length; d++) {
-    const want = d === depth && depth > 0;
-    if (hasNumberStart(nodes[d]) !== want) {
-      root = updateAt(root, doc.cursor.slice(0, d), (n) => withNumberStart(n, want));
-    }
+    const want = on && d === doc.cursor.length && d > 0;
+    if (hasNumberStart(nodes[d]) !== want) root = updateAt(root, line.slice(0, d), (n) => withNumberStart(n, want));
   }
   return root === doc.root ? doc : { ...doc, root };
+}
+
+/** 今のノードが番号の起点（この後の手から番号を付ける）なら true */
+export function isNumberStartHere(doc: Doc): boolean {
+  return doc.cursor.length > 0 && hasNumberStart(cursorNode(doc));
 }
 
 /**

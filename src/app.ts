@@ -2,6 +2,7 @@
  * 碁盤アプリの UI。ポインタ操作・元に戻す・拡大・PNG / SGF の保存と読み込み・盤面の一覧をつなぐ。
  *
  * 盤面の内容はゲームツリー（edit.ts の Doc）だけに持ち、表示する局面はそこから導出する（game.ts）。
+ * 手順の移動（nav.ts）はツリーを変えないので、元に戻すの履歴に積まない。
  */
 
 import { BLACK, Board, CAPTURE_MODES, EMPTY, type StoneColor } from './board';
@@ -10,7 +11,9 @@ import {
   docName,
   docNodes,
   eraseStone,
+  cursorNode,
   hasContent,
+  isNumberStartHere,
   labelsAt,
   newDoc,
   nextColorOf,
@@ -18,7 +21,7 @@ import {
   renameDoc,
   resetDoc,
   setLabel,
-  setNumberStart,
+  setNumberStartHere,
   setTriangle,
   toggleTurn,
   trianglesAt,
@@ -26,7 +29,7 @@ import {
   type EditOptions,
 } from './edit';
 import { downloadBlob, exportFileName, renderPng } from './export';
-import { PositionCache, type GamePosition } from './game';
+import { PositionCache, lineMoves, type GameMove, type GamePosition } from './game';
 import { UndoHistory } from './history';
 import {
   cleanName,
@@ -43,11 +46,31 @@ import {
 import { pickLabelText } from './labels';
 import { computeLayout, hitTest, hitTestClamped, hitsAlongSegment, type Layout } from './layout';
 import { NUMBER_STYLES, movesOnBoard, stoneNumbers } from './moves';
+import {
+  activeFork,
+  childAt,
+  forksOnLine,
+  goToDepth,
+  isMainLine,
+  lineAfterEdit,
+  lineEndId,
+  movesInBranch,
+  next as nextNode,
+  prev as prevNode,
+  promote,
+  removeBranch,
+  selectVariation,
+  switchVariation,
+  variationLetter,
+  variationsAt,
+  type Fork,
+  type Nav,
+} from './nav';
 import { getStorage, loadSettings, saveSettings } from './persistence';
-import { THEME_NAMES, draw, drawThumbnail } from './renderer';
+import { THEME_NAMES, draw, drawThumbnail, type Candidate } from './renderer';
 import { exportSgf, importSgfBytes } from './sgf-file';
-import { BOARD_SIZES, COLOR_MODES, currentColor, initialState, type AppState, type Tool } from './state';
-import { getProp, setProp } from './tree';
+import { BOARD_SIZES, CANDIDATE_MODES, COLOR_MODES, currentColor, initialState, type AppState, type Tool } from './state';
+import { extendPath, getProp, nodesOnPath, setProp, type NodePath } from './tree';
 import { fullView, isFullView, normalizeView, viewAround, viewFromPoints, type Point, type View } from './view';
 
 /** ドラッグ中に交点に「触れた」とみなす距離（マス単位） */
@@ -104,8 +127,12 @@ function samePoint(a: Point | null, b: Point | null): boolean {
   return a === null || b === null ? a === b : a.x === b.x && a.y === b.y;
 }
 
+function samePath(a: NodePath, b: NodePath): boolean {
+  return a.length === b.length && a.every((k, i) => k === b[i]);
+}
+
 function sameDoc(a: Doc, b: Doc): boolean {
-  return a.root === b.root && a.turn === b.turn && a.cursor.length === b.cursor.length && a.cursor.every((k, i) => k === b.cursor[i]);
+  return a.root === b.root && a.turn === b.turn && samePath(a.cursor, b.cursor);
 }
 
 function sameValues(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
@@ -122,6 +149,8 @@ export class GobanApp {
   private readonly positions = new PositionCache();
   /** doc の今のノードの局面 */
   private pos: GamePosition = this.positions.position(docNodes(this.doc));
+  /** 今の手順（根から今のノードを通ってその先まで。nav.ts）。保存しない */
+  private line: NodePath = [];
   /** 保存した盤面の一覧。currentId の盤面が今 doc に読み込まれている */
   private entries: BoardEntry[] = [];
   private currentId = '';
@@ -166,6 +195,19 @@ export class GobanApp {
     moveLog: byId('moveLog', HTMLElement),
     moveLogStatus: byId('moveLogStatus', HTMLElement),
     moveLogList: byId('moveLogList', HTMLOListElement),
+    numberHere: byId('numberHere', HTMLButtonElement),
+    navFirst: byId('navFirst', HTMLButtonElement),
+    navPrev: byId('navPrev', HTMLButtonElement),
+    navNext: byId('navNext', HTMLButtonElement),
+    navLast: byId('navLast', HTMLButtonElement),
+    navPos: byId('navPos', HTMLElement),
+    variationsBtn: byId('variationsBtn', HTMLButtonElement),
+    deleteFrom: byId('deleteFrom', HTMLButtonElement),
+    variations: byId('variations', HTMLElement),
+    variationsTitle: byId('variationsTitle', HTMLElement),
+    variationList: byId('variationList', HTMLOListElement),
+    promoteVariation: byId('promoteVariation', HTMLButtonElement),
+    deleteVariation: byId('deleteVariation', HTMLButtonElement),
     boardsToggle: byId('boardsBtn', HTMLButtonElement),
     boards: byId('boards', HTMLElement),
     boardName: byId('boardName', HTMLInputElement),
@@ -177,8 +219,10 @@ export class GobanApp {
   };
   /** 選択ボタン群の表示を状態に合わせる関数 */
   private readonly segmentUpdaters: Array<() => void> = [];
-  /** 着手のログを最後に描き直したときの手数（増えたら末尾までスクロールする） */
-  private loggedMoves = -1;
+  /** 着手のログを最後に描き直したときの今のノード（変わったら今の手が見えるようにスクロールする） */
+  private loggedCursor = '';
+  /** 変化の一覧を開いているか */
+  private variationsOpen = false;
 
   constructor() {
     const ctx = this.canvas.getContext('2d');
@@ -231,6 +275,7 @@ export class GobanApp {
       marks: this.marks(),
       numbers: this.numbers(),
       labels: labelsAt(this.doc),
+      candidates: this.candidates(),
       ghost,
       selection: this.selection,
       scale: this.scale,
@@ -263,6 +308,27 @@ export class GobanApp {
     return numbering ? stoneNumbers(this.displayBoard(), this.pos.moves, this.pos.numberFrom, numberStyle) : null;
   }
 
+  /** 盤に出す次の手の候補（今のノードの子の手）。設定で出さないときや、候補がないときは空 */
+  private candidates(): Candidate[] {
+    const mode = this.state.candidates;
+    const children = cursorNode(this.doc).children;
+    if (mode === 'off' || children.length === 0 || (mode === 'branch' && children.length < 2)) return [];
+    const selected = this.line[this.doc.cursor.length];
+    const out: Candidate[] = [];
+    for (const v of variationsAt(this.doc.root, this.doc.cursor, this.pos.size)) {
+      // 子の最初のノードが手のときだけ（配置ノードやパスは盤に出せない）
+      const first = v.first;
+      if (!v.startsWithMove || !first || first.point === null) continue;
+      out.push({
+        point: first.point,
+        color: first.color,
+        text: children.length > 1 ? variationLetter(v.index) : '',
+        selected: children.length > 1 && v.index === selected,
+      });
+    }
+    return out;
+  }
+
   /** 次の手番（交互モードで置く色） */
   private nextColor(): StoneColor {
     return nextColorOf(this.doc, this.pos);
@@ -279,10 +345,15 @@ export class GobanApp {
 
   private readonly positionOf = (nodes: Parameters<PositionCache['position']>[0]) => this.positions.position(nodes);
 
-  /** 盤面の内容を doc にする（局面を求め直す） */
-  private setDoc(doc: Doc): void {
+  /**
+   * 盤面の内容を doc にする（局面を求め直す）。line は今の手順。省くと、前の手順が今のノードを通るなら保ち、
+   * 通らなければ今のノードから最初の子をたどる
+   */
+  private setDoc(doc: Doc, line?: NodePath): void {
     const prevSize = this.pos.size;
+    const prevLine = { line: this.line, endId: lineEndId(this.doc.root, this.line) };
     this.doc = doc;
+    this.line = line ?? lineAfterEdit(doc.root, doc.cursor, prevLine);
     this.pos = this.positions.position(docNodes(doc));
     if (this.pos.size !== prevSize) {
       this.view = fullView(this.pos.size);
@@ -384,7 +455,9 @@ export class GobanApp {
   /** entry の盤面を doc にする */
   private openEntry(entry: BoardEntry): void {
     this.doc = entry.doc;
+    this.line = extendPath(entry.doc.root, entry.doc.cursor);
     this.view = entry.view;
+    this.variationsOpen = false;
     this.pos = this.positions.position(docNodes(this.doc));
   }
 
@@ -696,8 +769,16 @@ export class GobanApp {
     if (this.stroke && e.pointerId === this.stroke.pointerId) this.finishStroke();
   }
 
-  /** 交点 i に石を置く（囲まれた石の扱いに合わせる）。置けなければその理由 */
+  /**
+   * 交点 i に石を置く（囲まれた石の扱いに合わせる）。置けなければその理由。
+   * 同じ手の子があればその子へ進む。盤に候補を出している点なら、色が違ってもその子へ進む
+   */
   private placeAt(i: number, color: StoneColor): 'ok' | 'occupied' | 'suicide' {
+    const k = childAt(cursorNode(this.doc), this.pos.size, i, color);
+    if (k >= 0 && this.candidates().some((c) => c.point === i)) {
+      this.setDoc({ root: this.doc.root, cursor: [...this.doc.cursor, k], turn: null });
+      return 'ok';
+    }
     const res = placeStone(this.doc, this.positionOf, i, color, this.state.captureMode, this.editOptions);
     if (!res.ok) return res.reason;
     this.setDoc(res.doc);
@@ -719,7 +800,8 @@ export class GobanApp {
     const stroke = this.stroke;
     if (!stroke) return;
     this.stroke = null;
-    if (!sameDoc(stroke.before, this.doc)) this.history.record(stroke.before);
+    // ツリーが変わったときだけ編集として積む（子の手へ進む・親へ戻るだけなら手順の移動）
+    if (stroke.before.root !== this.doc.root) this.history.record(stroke.before);
     this.changed();
     this.requestRender();
   }
@@ -728,12 +810,50 @@ export class GobanApp {
   // 操作
   // ---------------------------------------------------------------------------
 
-  /** 記録を変える操作（元に戻せる）。doc が変わらなければ何もしない */
-  private edit(doc: Doc): void {
-    if (sameDoc(doc, this.doc)) return;
-    this.history.record(this.doc);
-    this.setDoc(doc);
+  /** 記録を変える操作（ツリーが変わったら元に戻せる）。doc が変わらなければ何もしない */
+  private edit(doc: Doc, line?: NodePath): void {
+    if (sameDoc(doc, this.doc) && (line === undefined || samePath(line, this.line))) return;
+    if (doc.root !== this.doc.root) this.history.record(this.doc);
+    this.setDoc(doc, line);
     this.changed();
+  }
+
+  /** 手順を移動する（ツリーは変えない。履歴にも積まない）。nav が null なら何もしない */
+  private navigate(nav: Nav | null): void {
+    if (this.stroke || !nav) return;
+    const moved = !samePath(nav.cursor, this.doc.cursor);
+    if (!moved && samePath(nav.line, this.line)) return;
+    // 手番の一時的な入れ替えは、ノードを移ったら消す
+    this.setDoc({ root: this.doc.root, cursor: nav.cursor, turn: moved ? null : this.doc.turn }, nav.line);
+    this.hover = null;
+    this.changed();
+  }
+
+  private get nav(): Nav {
+    return { cursor: this.doc.cursor, line: this.line };
+  }
+
+  /** 今の分かれ目で、変化を index 番目にする */
+  private chooseVariation(fork: Fork, index: number): void {
+    this.navigate(selectVariation(this.doc.root, this.nav, fork, index));
+  }
+
+  /** 選んでいる変化（今の分かれ目）までの手順を本線にする */
+  private promoteVariation(): void {
+    const fork = activeFork(this.doc.root, this.nav);
+    if (this.stroke || !fork) return;
+    const res = promote(this.doc.root, this.nav, this.line.slice(0, fork.depth));
+    this.edit({ root: res.root, cursor: res.nav.cursor, turn: this.doc.turn }, res.nav.line);
+  }
+
+  /** path のノードから先を削除する（確認する。元に戻せる） */
+  private deleteBranch(path: NodePath, what: string): void {
+    if (this.stroke || path.length === 0) return;
+    const n = movesInBranch(this.doc.root, path, this.pos.size);
+    const count = n > 0 ? `（${n} 手）` : '';
+    if (!window.confirm(`${what}${count}を削除しますか？\n（「取り消し」で元に戻せます）`)) return;
+    const res = removeBranch(this.doc.root, this.nav, path);
+    this.edit({ root: res.root, cursor: res.nav.cursor, turn: null }, res.nav.line);
   }
 
   private setTool(tool: Tool): void {
@@ -755,7 +875,7 @@ export class GobanApp {
 
   private setBoardSize(size: number): void {
     if (this.stroke || size === this.pos.size) return;
-    const message = `${size}路盤に変更すると今の盤面は消えます。よろしいですか？\n（「元に戻す」で復元できます）`;
+    const message = `${size}路盤に変更すると今の盤面は消えます。よろしいですか？\n（「取り消し」で元に戻せます）`;
     if (hasContent(this.doc, this.pos) && !window.confirm(message)) return;
     this.edit(resetDoc(this.doc, size));
   }
@@ -764,10 +884,10 @@ export class GobanApp {
     const { board, moves } = this.pos;
     if (this.stroke || !hasContent(this.doc, this.pos)) return;
     const message = !board.isEmpty()
-      ? '盤面の石と文字をすべて消しますか？\n（「元に戻す」で復元できます）'
+      ? '盤面の石と文字をすべて消しますか？\n（「取り消し」で元に戻せます）'
       : moves.length === 0 && this.doc.root.children.length === 0
-        ? '盤面の文字をすべて消しますか？\n（「元に戻す」で復元できます）'
-        : '着手のログと盤面の文字を消しますか？\n（「元に戻す」で復元できます）';
+        ? '盤面の文字をすべて消しますか？\n（「取り消し」で元に戻せます）'
+        : '着手のログと盤面の文字を消しますか？\n（「取り消し」で元に戻せます）';
     if (!window.confirm(message)) return;
     this.edit(resetDoc(this.doc, this.pos.size));
   }
@@ -891,11 +1011,47 @@ export class GobanApp {
       state.numberStyle = v;
       settingChanged();
     });
+    // ログの手をタップするとその手へ移る。分かれ目の印をタップすると、分かれ目の手前へ移って変化の一覧を開く
     ui.moveLogList.addEventListener('click', (e) => {
+      const btn = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('button') : null;
+      if (!btn || this.stroke) return;
+      const fork = Number(btn.dataset.fork);
+      const depth = Number(btn.dataset.depth);
+      if (Number.isInteger(fork) && fork > 0) {
+        this.variationsOpen = true;
+        this.navigate(goToDepth(this.nav, fork - 1));
+        this.updateUI();
+      } else if (Number.isInteger(depth) && depth >= 0) {
+        this.navigate(goToDepth(this.nav, depth));
+      }
+    });
+    ui.numberHere.addEventListener('click', () => {
+      if (this.stroke) return;
+      this.edit(setNumberStartHere(this.doc, this.line, !isNumberStartHere(this.doc)));
+    });
+    ui.navFirst.addEventListener('click', () => this.navigate(goToDepth(this.nav, 0)));
+    ui.navPrev.addEventListener('click', () => this.navigate(prevNode(this.nav)));
+    ui.navNext.addEventListener('click', () => this.navigate(nextNode(this.nav)));
+    ui.navLast.addEventListener('click', () => this.navigate(goToDepth(this.nav, this.line.length)));
+    ui.variationsBtn.addEventListener('click', () => {
+      this.variationsOpen = !this.variationsOpen;
+      this.updateUI();
+    });
+    ui.variationList.addEventListener('click', (e) => {
       const btn = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('button[data-index]') : null;
       const index = Number(btn?.dataset.index);
-      if (this.stroke || !Number.isInteger(index) || index < 0) return;
-      this.edit(setNumberStart(this.doc, this.pos, index));
+      const fork = activeFork(this.doc.root, this.nav);
+      if (fork && Number.isInteger(index)) this.chooseVariation(fork, index);
+    });
+    ui.promoteVariation.addEventListener('click', () => this.promoteVariation());
+    ui.deleteVariation.addEventListener('click', () => {
+      const fork = activeFork(this.doc.root, this.nav);
+      if (fork) this.deleteBranch(this.line.slice(0, fork.depth), 'この変化');
+    });
+    ui.deleteFrom.addEventListener('click', () => this.deleteBranch(this.doc.cursor, '今の手から先'));
+    this.bindSegment('candidates', CANDIDATE_MODES, () => state.candidates, (v) => {
+      state.candidates = v;
+      settingChanged();
     });
     this.bindSegment('inheritMarks', ['on', 'off'] as const, () => (state.inheritMarks ? 'on' : 'off'), (v) => {
       state.inheritMarks = v === 'on';
@@ -929,14 +1085,7 @@ export class GobanApp {
 
     // 今のノードが配置ノードなら PL に書き（元に戻せる）、着手ノードなら一時的に入れ替える
     ui.nextColor.addEventListener('click', () => {
-      if (this.stroke) return;
-      const doc = toggleTurn(this.doc, this.pos);
-      if (doc.root !== this.doc.root) {
-        this.edit(doc);
-      } else {
-        this.setDoc(doc);
-        this.changed();
-      }
+      if (!this.stroke) this.edit(toggleTurn(this.doc, this.pos));
     });
     ui.undo.addEventListener('click', () => this.undo());
     ui.redo.addEventListener('click', () => this.redo());
@@ -991,6 +1140,20 @@ export class GobanApp {
         this.redo();
       } else if (e.key === 'Escape' && this.state.tool === 'zoom') {
         this.setTool(this.toolBeforeZoom);
+      } else if (!mod && !e.altKey && !e.shiftKey) {
+        // 手順の移動: ← → で前後、↑ ↓ で変化の切り替え、Home / End で最初と最後
+        const moves: Record<string, () => Nav | null> = {
+          ArrowLeft: () => prevNode(this.nav),
+          ArrowRight: () => nextNode(this.nav),
+          ArrowUp: () => switchVariation(this.doc.root, this.nav, -1),
+          ArrowDown: () => switchVariation(this.doc.root, this.nav, 1),
+          Home: () => goToDepth(this.nav, 0),
+          End: () => goToDepth(this.nav, this.line.length),
+        };
+        const move = moves[e.key];
+        if (!move) return;
+        e.preventDefault();
+        this.navigate(move());
       }
     });
   }
@@ -1009,27 +1172,102 @@ export class GobanApp {
     ui.resetZoom.disabled = isFullView(this.view, this.pos.size);
     ui.zoom.setAttribute('aria-pressed', String(state.tool === 'zoom'));
     ui.zoomHint.hidden = state.tool !== 'zoom';
+    const lineMoveList = lineMoves(nodesOnPath(this.doc.root, this.line) ?? [], this.pos.size);
+    this.updateNav(lineMoveList);
     ui.moveLog.hidden = !state.numbering;
-    if (state.numbering) this.updateMoveLog();
+    if (state.numbering) this.updateMoveLog(lineMoveList);
     this.updateBoardList();
     this.updateTitle();
   }
 
-  /** 着手のログ（根から今のノードまでの手）を描き直す */
-  private updateMoveLog(): void {
-    const { coordStyle, numberStyle } = this.state;
-    const { moves, numberFrom, size } = this.pos;
-    const { moveLogStatus: status, moveLogList: list } = this.ui;
-    const onBoard = movesOnBoard(this.displayBoard(), moves);
-    const from = Math.min(numberFrom, moves.length);
+  /** 手順の移動のボタンと、変化の一覧を今の状態に合わせる。lineMoveList は今の手順の着手 */
+  private updateNav(lineMoveList: readonly GameMove[]): void {
+    const { ui } = this;
+    const { cursor } = this.doc;
+    const atRoot = cursor.length === 0;
+    const atEnd = cursor.length >= this.line.length;
+    ui.navFirst.disabled = atRoot;
+    ui.navPrev.disabled = atRoot;
+    ui.navNext.disabled = atEnd;
+    ui.navLast.disabled = atEnd;
+    ui.deleteFrom.disabled = atRoot;
+    ui.navPos.textContent = `${this.pos.moves.length} / ${lineMoveList.length}`;
 
-    const items = moves.map((m, i) => {
+    const fork = activeFork(this.doc.root, this.nav);
+    ui.variationsBtn.disabled = !fork;
+    ui.variationsBtn.textContent = fork ? `変化 ${fork.index + 1}/${fork.count}` : '変化';
+    if (!fork) this.variationsOpen = false;
+    ui.variationsBtn.setAttribute('aria-expanded', String(this.variationsOpen));
+    ui.variations.hidden = !this.variationsOpen;
+    if (!fork || !this.variationsOpen) return;
+
+    // 分かれ目の手の手数（分かれ目より前の手の次）
+    const before = lineMoveList.filter((m) => m.depth < fork.depth).at(-1);
+    ui.variationsTitle.textContent = `${(before?.number ?? 0) + 1}手目の変化（${fork.count} 通り）`;
+    const parent = this.line.slice(0, fork.depth - 1);
+    const { size } = this.pos;
+    const { coordStyle } = this.state;
+    const items = variationsAt(this.doc.root, parent, size).map((v) => {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.dataset.index = String(i);
-      btn.setAttribute('aria-pressed', String(i === from));
-      if (i < from) btn.classList.add('before');
-      if (m.point !== null && !onBoard.has(i)) {
+      btn.dataset.index = String(v.index);
+      if (v.index === fork.index) btn.setAttribute('aria-current', 'true');
+      const letter = document.createElement('span');
+      letter.className = 'var-letter';
+      letter.textContent = variationLetter(v.index);
+      btn.append(letter);
+      if (v.first) {
+        const icon = document.createElement('span');
+        icon.className = `stone-icon ${v.first.color === BLACK ? 'black' : 'white'}`;
+        const pt = document.createElement('span');
+        pt.textContent =
+          v.first.point === null ? 'パス' : pointName(v.first.point % size, Math.floor(v.first.point / size), size, coordStyle);
+        btn.append(icon, pt);
+        if (!v.startsWithMove) pt.textContent += '（配置の後）';
+      } else {
+        const pt = document.createElement('span');
+        pt.textContent = '配置だけ';
+        btn.append(pt);
+      }
+      const len = document.createElement('span');
+      len.className = 'var-len';
+      len.textContent = `${v.moves}手`;
+      btn.append(len);
+      const li = document.createElement('li');
+      li.append(btn);
+      return li;
+    });
+    ui.variationList.replaceChildren(...items);
+    ui.promoteVariation.disabled = isMainLine(this.line.slice(0, fork.depth));
+  }
+
+  /** 着手のログ（今の手順の手。今の手より先は薄く出す）を描き直す */
+  private updateMoveLog(lineMoveList: readonly GameMove[]): void {
+    const { coordStyle, numberStyle } = this.state;
+    const { moves, numberFrom, size } = this.pos;
+    const { moveLogStatus: status, moveLogList: list, numberHere } = this.ui;
+    const onBoard = movesOnBoard(this.displayBoard(), moves);
+    const here = moves.length; // 今の局面までの手の数（今の手順の先頭からこの数だけ）
+    const from = Math.min(numberFrom, here);
+
+    const start = document.createElement('button');
+    start.type = 'button';
+    start.className = 'start';
+    start.dataset.depth = '0';
+    start.textContent = '開始';
+    start.title = '最初の局面へ';
+    if (here === 0) start.setAttribute('aria-current', 'step');
+    const items: HTMLElement[][] = [[start]];
+
+    lineMoveList.forEach((m, i) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.depth = String(m.depth);
+      if (i === here - 1) btn.setAttribute('aria-current', 'step');
+      if (i >= here) btn.classList.add('after');
+      else if (i < from) btn.classList.add('before');
+      if (i === from && from < here) btn.classList.add('from');
+      if (i < here && m.point !== null && !onBoard.has(i)) {
         btn.classList.add('gone');
         btn.title = '盤上にありません';
       }
@@ -1042,35 +1280,52 @@ export class GobanApp {
       pt.className = 'mv-pt';
       pt.textContent = m.point === null ? 'パス' : pointName(m.point % size, Math.floor(m.point / size), size, coordStyle);
       btn.append(num, icon, pt);
-      return btn;
+      items.push([btn]);
     });
-    // 末尾に「次の手から」（これから置く石から番号を付ける）
-    const next = document.createElement('button');
-    next.type = 'button';
-    next.className = 'next';
-    next.dataset.index = String(moves.length);
-    next.setAttribute('aria-pressed', String(from === moves.length));
-    next.textContent = '次の手から';
-    items.push(next);
+
+    // 分かれ目の印は、変化の最初の手（なければ末尾）に付ける
+    for (const fork of forksOnLine(this.doc.root, this.line)) {
+      const badge = document.createElement('button');
+      badge.type = 'button';
+      badge.className = 'mv-fork';
+      badge.dataset.fork = String(fork.depth);
+      badge.textContent = `${fork.index + 1}/${fork.count}`;
+      badge.title = `変化 ${fork.index + 1}/${fork.count}（タップで一覧）`;
+      const i = lineMoveList.findIndex((m) => m.depth >= fork.depth);
+      if (i >= 0) items[i + 1].unshift(badge);
+      else items.push([badge]);
+    }
     list.replaceChildren(
-      ...items.map((b) => {
+      ...items.map((els) => {
         const li = document.createElement('li');
-        li.append(b);
+        li.append(...els);
         return li;
       }),
     );
 
+    numberHere.disabled = this.doc.cursor.length === 0;
+    numberHere.setAttribute('aria-pressed', String(isNumberStartHere(this.doc)));
     const first = numberStyle === 'absolute' ? moves[from]?.number : 1;
-    const last = numberStyle === 'absolute' ? moves.at(-1)?.number : moves.length - from;
+    const last = numberStyle === 'absolute' ? moves.at(-1)?.number : here - from;
     status.textContent =
-      moves.length === 0
+      lineMoveList.length === 0
         ? 'まだ石が置かれていません'
-        : from >= moves.length
-          ? `${moves.length}手 ・ 次の手から番号`
-          : `${moves.length}手 ・ ${moves[from].number}手目から番号（${first}〜${last}）`;
+        : from >= here
+          ? `次の手から番号`
+          : `${moves[from].number}手目から番号（${first}〜${last}）`;
 
-    if (moves.length > this.loggedMoves) list.scrollTop = list.scrollHeight;
-    this.loggedMoves = moves.length;
+    // 今のノードが変わったら、今の手が見えるようにスクロールする
+    const key = this.doc.cursor.join(',');
+    if (key !== this.loggedCursor) {
+      this.loggedCursor = key;
+      const cur = list.querySelector<HTMLElement>('[aria-current="step"]');
+      if (cur) {
+        const top = cur.offsetTop - 6;
+        const bottom = cur.offsetTop + cur.offsetHeight + 6;
+        if (top < list.scrollTop) list.scrollTop = top;
+        else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+      }
+    }
   }
 
   private toast(message: string): void {

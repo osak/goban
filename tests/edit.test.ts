@@ -13,7 +13,8 @@ import {
   renameDoc,
   resetDoc,
   setLabel,
-  setNumberStart,
+  isNumberStartHere,
+  setNumberStartHere,
   setTriangle,
   toggleTurn,
   trianglesAt,
@@ -192,7 +193,7 @@ describe('石を取り除く', () => {
     s.place(1, 1, BLACK);
     s.place(2, 2, WHITE);
     s.place(3, 3, BLACK);
-    s.doc = setNumberStart(s.doc, s.position, 3); // 次の手から（B[dd] に GBNS）
+    s.doc = setNumberStartHere(s.doc, s.doc.cursor, true); // 次の手から（B[dd] に GBNS）
     s.erase(1, 1); // AE の子ができる
     s.erase(3, 3); // 最後に置いた石
     // 番号の起点の印は抜いたノードの親に移るので、番号の付き方は変わらない
@@ -266,20 +267,27 @@ describe('印・文字・番号の起点・手番・名前', () => {
     expect(s.nodes()).toEqual([';B[bb]LB[ee:\\:\\]]']);
   });
 
-  it('番号の起点は、その手の直前のノードに 1 つだけ付ける', () => {
+  it('番号の起点は今のノードに付け、今の手順の上のほかの起点は外す', () => {
     const s = new Session();
     s.place(0, 0, BLACK);
     s.place(1, 1, WHITE);
     s.place(2, 2, BLACK);
-    s.doc = setNumberStart(s.doc, s.position, 2);
-    expect(s.position.numberFrom).toBe(2);
-    expect(s.nodes()).toEqual([';B[aa]', ';W[bb]GBNS[]', ';B[cc]']);
-    s.doc = setNumberStart(s.doc, s.position, 3); // 次の手から
+    const line = s.doc.cursor;
+    s.doc = setNumberStartHere(s.doc, line, true); // 次の手から
     expect(s.position.numberFrom).toBe(3);
-    expect(s.nodes()).toEqual([';B[aa]', ';W[bb]', ';B[cc]GBNS[]']);
-    s.doc = setNumberStart(s.doc, s.position, 0);
-    expect(s.position.numberFrom).toBe(0);
+    expect(isNumberStartHere(s.doc)).toBe(true);
+    // 1 手目に戻って起点を付けると、先の手順の起点は外れる
+    s.doc = { ...s.doc, cursor: [0] };
+    s.doc = setNumberStartHere(s.doc, line, true);
+    expect(s.nodes()).toEqual([';B[aa]GBNS[]', ';W[bb]', ';B[cc]']);
+    expect(s.position.numberFrom).toBe(1);
+    s.doc = setNumberStartHere(s.doc, line, false);
     expect(writeSgf(s.doc.root)).not.toContain('GBNS');
+    expect(isNumberStartHere(s.doc)).toBe(false);
+    // 根では付けない（最初の手から）
+    s.doc = setNumberStartHere({ ...s.doc, cursor: [] }, line, true);
+    expect(writeSgf(s.doc.root)).not.toContain('GBNS');
+    expect(() => setNumberStartHere({ ...s.doc, cursor: [1] }, line, true)).toThrow();
   });
 
   it('手番の入れ替え: 配置ノードでは PL、着手ノードでは一時的に持つ', () => {
